@@ -32,13 +32,50 @@
           "revision": {
             "type": "string",
             "description": "verdict=revise 时给出改法"
+          },
+          "corrections": {
+            "type": "array",
+            "description": "**具体的、可逐条核对的订正。** 凡是你在 flaw 里说了「这个数算错了」「这个常数不对」「这个前提不成立」，就必须在这里落成一条。只写在 flaw 的自由文本里是不够的 —— 实际发生过：验证者采纳了 revise 这个裁决，却把你点名算错的那个数原样写进了代码，下一轮才被抓出来。没有需要订正的具体数值时给空数组。",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "本轮唯一，如 c1、c2 —— 验证者要按 id 逐条交代"
+                },
+                "what": {
+                  "type": "string",
+                  "description": "订正的是什么量，如「跨越双轨所需的横向位移」"
+                },
+                "wrong": {
+                  "type": "string",
+                  "description": "假设者用的错值，原样抄出来"
+                },
+                "correct": {
+                  "type": "string",
+                  "description": "正确值。给不出确切值就写清取值范围，并说明为什么只能给范围"
+                },
+                "basis": {
+                  "type": "string",
+                  "description": "凭什么是这个值 —— 代码位置、几何推导、量纲或算术。不许只说「显然」"
+                }
+              },
+              "required": [
+                "id",
+                "what",
+                "wrong",
+                "correct",
+                "basis"
+              ]
+            }
           }
         },
         "required": [
           "hypothesis_id",
           "flaw",
           "severity",
-          "verdict"
+          "verdict",
+          "corrections"
         ]
       }
     },

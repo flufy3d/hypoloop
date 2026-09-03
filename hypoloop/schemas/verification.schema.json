@@ -87,6 +87,35 @@
       "items": {
         "type": "string"
       }
+    },
+    "corrections_addressed": {
+      "type": "array",
+      "description": "质疑者给的**每一条** corrections 都要在这里交代，一条不许漏。调用方会机械核对 id 的覆盖情况，漏了会被点名。",
+      "items": {
+        "type": "object",
+        "properties": {
+          "correction_id": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "applied",
+              "rejected",
+              "not_applicable"
+            ]
+          },
+          "evidence": {
+            "type": "string",
+            "description": "applied：写清代码里最终的实际取值，以及支持它的读数。rejected：拿读数说明为什么质疑者也不对 —— 「我觉得不用」不算理由。not_applicable：说清这条为什么落空了（比如整条假设已被证伪并回滚）"
+          }
+        },
+        "required": [
+          "correction_id",
+          "action",
+          "evidence"
+        ]
+      }
     }
   },
   "required": [
@@ -95,6 +124,7 @@
     "evidence",
     "kept",
     "reverted",
-    "open_questions"
+    "open_questions",
+    "corrections_addressed"
   ]
 }

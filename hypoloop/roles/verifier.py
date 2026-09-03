@@ -11,6 +11,45 @@ from ._shared import as_json, history_briefing, project_tree
 NAME = "验证者"
 
 
+def corrections(critique: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """把质疑者散在各条意见里的订正项摊平成一张清单。"""
+    out: List[Dict[str, Any]] = []
+    for c in (critique or {}).get("critiques") or []:
+        for fix in c.get("corrections") or []:
+            if isinstance(fix, dict) and fix.get("id"):
+                item = dict(fix)
+                item["hypothesis_id"] = c.get("hypothesis_id")
+                out.append(item)
+    return out
+
+
+def corrections_checklist(critique: Dict[str, Any]) -> str:
+    """订正清单。**必须逐条签收**，这是机制而不是客气话。
+
+    为什么单独摆出来而不是让它自己从 critique 的 JSON 里翻：质疑者的裁决
+    （keep/revise/reject）是结构化的，具体数值订正原来只在 flaw 的自由文本里。
+    实际发生过一次：验证者接受了 revise 这个裁决，却把被点名算错的那个常数原样
+    写进代码，留下一个必死率 9% 的窟窿，下一轮才被抓出来。所以摊平、编号、
+    要求逐条交代，调用方还会机械核对 id 覆盖情况。
+    """
+    items = corrections(critique)
+    if not items:
+        return "【订正清单】质疑者这轮没给出需要订正的具体数值。"
+    lines = ["【订正清单 —— 每一条都必须在 corrections_addressed 里交代，"
+             "一条不许漏。调用方会机械核对 id，漏了会被点名】"]
+    for it in items:
+        lines.append("  [{0}] （针对 {1}）{2}".format(
+            it.get("id"), it.get("hypothesis_id"), it.get("what")))
+        lines.append("       假设者用的错值：{0}".format(it.get("wrong")))
+        lines.append("       正确值：{0}".format(it.get("correct")))
+        lines.append("       依据：{0}".format(it.get("basis")))
+    lines.append("**注意：采纳 revise 这个裁决，不等于采纳了订正的数值。** "
+                 "要么按 correct 改并给出读数（applied），要么拿读数证明质疑者也"
+                 "错了（rejected），要么说清这条为什么落空（not_applicable）。"
+                 "「我觉得不用」不是理由。")
+    return "\n".join(lines)
+
+
 def build_prompt(task: str, root: Path, cfg: Dict[str, Any],
                  hypotheses: Dict[str, Any], critique: Dict[str, Any],
                  history: List[Dict[str, Any]]) -> str:
@@ -27,6 +66,8 @@ def build_prompt(task: str, root: Path, cfg: Dict[str, Any],
         "【假设者提交的内容】\n" + as_json(hypotheses),
         "",
         "【质疑者的意见】\n" + as_json(critique),
+        "",
+        corrections_checklist(critique),
         "",
         "【最重要的一条：往被实证的方向走】",
         "你的目标不是「把假设实现掉」，是**搞清楚哪条是真的**。做法：",

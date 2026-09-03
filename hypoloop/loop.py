@@ -279,7 +279,47 @@ def _one_round(i: int, total: int, task: str, target: Path, cfg: Dict[str, Any],
              for k in ("supported", "refuted", "inconclusive")}
     log("  → 实证 {supported}、证伪 {refuted}、未决 {inconclusive}；改了 {n} 个文件"
         .format(n=len(out["verify"].get("changes") or []), **tally))
+    for line in _correction_report(out["challenge"], out["verify"]):
+        log(line)
     return out
+
+
+def _correction_report(critique: Dict[str, Any],
+                       verify: Dict[str, Any]) -> List[str]:
+    """核对质疑者的订正有没有被逐条交代 —— 机械核对，不是看它自己怎么说。
+
+    起因是一次真实事故：质疑者正确指出假设者把某个位移算成了碰撞体全宽（3.70m，
+    几何错了），验证者采纳了 `revise` 这个**裁决**，却把 3.70 原样写进代码，
+    留下一个必死率 9% 的窟窿，下一轮才被抓出来。裁决是结构化字段，订正当时只在
+    自由文本里 —— 所以能被静默跳过。
+
+    现在订正是一等字段，这里比对 id 覆盖：漏了就点名，rejected 的也列出来让人过目。
+    只报告不中止 —— 和 audit.py 一样，是照妖镜不是熔断器。
+    """
+    wanted = {c["id"]: c for c in verifier.corrections(critique)}
+    if not wanted:
+        return []
+    got = {}
+    for a in (verify or {}).get("corrections_addressed") or []:
+        if isinstance(a, dict) and a.get("correction_id"):
+            got[str(a["correction_id"])] = a
+
+    missed = [i for i in wanted if i not in got]
+    rejected = [i for i, a in got.items()
+                if a.get("action") == "rejected" and i in wanted]
+    lines = ["  → 质疑者给了 {0} 条订正，交代了 {1} 条".format(
+        len(wanted), len(set(got) & set(wanted)))]
+    if missed:
+        lines.append("    !! 有 {0} 条订正**没被交代**，这正是上次留下 9% 窟窿的"
+                     "路径，自己看一眼：".format(len(missed)))
+        for i in missed:
+            w = wanted[i]
+            lines.append("       [{0}] {1}：应为 {2}（假设者用的是 {3}）".format(
+                i, w.get("what"), w.get("correct"), w.get("wrong")))
+    for i in rejected:
+        lines.append("    · [{0}] 验证者反驳了这条订正，理由：{1}".format(
+            i, str(got[i].get("evidence") or "")[:160]))
+    return lines
 
 
 def _step(role: str, prompt: str, target: Path, cfg: Dict[str, Any],
