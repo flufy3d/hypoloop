@@ -80,7 +80,7 @@ hypoloop history                         # 看历史 token 账
 | `--allow-dirty` | 目标不是 git 仓库、或工作区不干净时也硬跑 |
 | `--save-config` | 把本次参数存成这个项目的默认值 |
 
-## 三件它认真对待的事
+## 四件它认真对待的事
 
 ### 1. 「只有验证者能改文件」是**机制**，不是提示词里的一句请求
 
@@ -105,7 +105,17 @@ hypoloop history                         # 看历史 token 账
 起本地服务、装个无头浏览器截图对比 …… 都行。hypoloop 不替它做主，也就不用背它的
 依赖。唯一的边界是：取证用的工具和临时产物不许留在目标仓库里。
 
-### 3. 额度是**真额度**，不是本地估算
+### 3. agy 有三个会静默出错的坑，都踩过了
+
+这三条都是实测撞出来的，改 `agy.py` 之前先读一遍：
+
+| 坑 | 症状 | 怎么办 |
+|---|---|---|
+| **agy 不认子进程的 cwd** | 不给 `--add-dir`，agent 在 `~/.gemini/antigravity-cli/scratch` 里干活。**全程 `status=SUCCESS`**：你让它建文件，它回报「已创建」，路径在 scratch 底下；你让它读代码，它看到一个空目录。 | 每次调用都带 `--add-dir <目标目录>` |
+| **headless 下权限一律自动拒绝** | 「a tool required the "read_file" permission that headless mode cannot prompt for, so it was auto-denied」——只读角色连代码都读不了，直接交白卷 | 所有角色都得给 `--dangerously-skip-permissions`；只读靠 `--mode plan` + 指纹管，不是靠扣这个标志 |
+| **`--disable-slash-commands` 会顺手废掉 `--mode`** | agy 只是警告一句「--mode plan has no effect while slash command expansion is disabled」，然后只读角色**悄悄变成了可写角色** | 别用这个标志 |
+
+### 4. 额度是**真额度**，不是本地估算
 
 agy 没有任何 `quota` / `usage` 子命令，`~/.gemini` 下也没有额度文件。真数字只有一条路：
 

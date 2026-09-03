@@ -215,8 +215,7 @@ def _step(role: str, prompt: str, target: Path, cfg: Dict[str, Any],
     with guard:
         call = run_agy(
             prompt, cwd=target, model=model, mode=mode,
-            schema_path=config.schema(schema_name),
-            allow_edits=not readonly, timeout_sec=int(timeout))
+            schema_path=config.schema(schema_name), timeout_sec=int(timeout))
     ledger.add(role, round_no, call)
     report.dump_json(run_dir / (stem + ".raw.json"), dict(call))
 

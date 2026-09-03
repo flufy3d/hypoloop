@@ -74,24 +74,43 @@ def build_argv(
     *,
     model: str,
     mode: str,
+    workspace: Optional[Path] = None,
     schema_path: Optional[Path] = None,
-    allow_edits: bool = False,
     timeout_sec: int = 1800,
     extra_dirs: Optional[List[str]] = None,
 ) -> List[str]:
+    """拼 agy 的命令行。
+
+    三个都是实测踩出来的坑，别想当然改：
+
+    **`--add-dir <目标目录>` 是必须的。agy 不认子进程的 cwd。** 不给它，agent 会在
+    自己的临时工作区 `~/.gemini/antigravity-cli/scratch` 里干活 —— 而且**它不会
+    报错**：你让它建个文件，它高高兴兴回报「已创建」，路径却在 scratch 底下；你让它
+    读代码，它看到的是一个空目录。整件事从头到尾 status=SUCCESS，静默地全错。
+
+    **`--dangerously-skip-permissions` 是必须的，只读角色也一样。** 在 headless 的
+    print 模式下 agy 没法弹权限确认框,任何需要授权的工具(包括 `read_file`)会被
+    **自动拒绝**,agent 直接交白卷:「a tool required the "read_file" permission
+    that headless mode cannot prompt for, so it was auto-denied」。所以「只读」不能
+    靠不给这个标志来实现 —— 那样只读角色连代码都读不了。真正管住写的是
+    `--mode plan` 加上 guard.py 的工作区指纹。
+
+    **不要加 `--disable-slash-commands`。** 它会连带把 `--mode` 废掉,agy 会警告
+    「--mode plan has no effect while slash command expansion is disabled」——
+    于是只读角色悄悄变成了可写角色,而命令行看上去一切正常。
+    """
     argv = [
         binary,
         "--model", model,
         "--mode", mode,
         "--output-format", "json",
-        "--print-timeout", f"{int(timeout_sec)}s",
-        # 提示词里的 /xxx 会被当成 slash command 展开,这里是纯数据,关掉。
-        "--disable-slash-commands",
+        "--print-timeout", "{0}s".format(int(timeout_sec)),
+        "--dangerously-skip-permissions",
     ]
+    if workspace is not None:
+        argv += ["--add-dir", str(workspace)]
     if schema_path is not None:
         argv += ["--json-schema", str(schema_path)]
-    if allow_edits:
-        argv += ["--dangerously-skip-permissions"]
     for d in extra_dirs or []:
         argv += ["--add-dir", d]
     return argv
@@ -104,15 +123,14 @@ def run_agy(
     model: str,
     mode: str = MODE_READONLY,
     schema_path: Optional[Path] = None,
-    allow_edits: bool = False,
     timeout_sec: int = 1800,
     binary: Optional[str] = None,
 ) -> AgyCall:
     """跑一次 agy,返回解析后的结果。**从不抛**(除了找不到 agy)。"""
     bin_path = binary or agy_binary()
     argv = build_argv(
-        bin_path, model=model, mode=mode, schema_path=schema_path,
-        allow_edits=allow_edits, timeout_sec=timeout_sec,
+        bin_path, model=model, mode=mode, workspace=Path(cwd),
+        schema_path=schema_path, timeout_sec=timeout_sec,
     )
     try:
         proc = subprocess.run(

@@ -49,28 +49,43 @@ class TestParseOutput(unittest.TestCase):
 
 
 class TestArgv(unittest.TestCase):
-    def test_readonly_role_never_gets_skip_permissions(self):
+    def test_readonly_role_runs_in_plan_mode(self):
         argv = agy.build_argv("agy", model="m", mode=agy.MODE_READONLY)
-        self.assertIn("--mode", argv)
         self.assertEqual(argv[argv.index("--mode") + 1], "plan")
-        self.assertNotIn("--dangerously-skip-permissions", argv)
 
-    def test_verifier_gets_edit_rights(self):
-        argv = agy.build_argv("agy", model="m", mode=agy.MODE_WRITE,
-                              allow_edits=True)
+    def test_verifier_runs_in_accept_edits(self):
+        argv = agy.build_argv("agy", model="m", mode=agy.MODE_WRITE)
         self.assertEqual(argv[argv.index("--mode") + 1], "accept-edits")
-        self.assertIn("--dangerously-skip-permissions", argv)
+
+    def test_skip_permissions_always_on(self):
+        # headless 下不给这个标志，连 read_file 都会被自动拒绝，只读角色直接交白卷。
+        # 「只读」是 --mode plan + guard.py 指纹管的，不是靠扣掉这个标志。
+        for mode in (agy.MODE_READONLY, agy.MODE_WRITE):
+            self.assertIn("--dangerously-skip-permissions",
+                          agy.build_argv("agy", model="m", mode=mode))
+
+    def test_never_disables_slash_commands(self):
+        # --disable-slash-commands 会连带把 --mode 废掉（agy 自己会警告），
+        # 于是只读角色悄悄变成可写角色，而命令行看上去一切正常。
+        for mode in (agy.MODE_READONLY, agy.MODE_WRITE):
+            self.assertNotIn("--disable-slash-commands",
+                             agy.build_argv("agy", model="m", mode=mode))
+
+    def test_workspace_becomes_add_dir(self):
+        # agy 不认子进程的 cwd。不给 --add-dir，agent 会在
+        # ~/.gemini/antigravity-cli/scratch 里干活，而且**全程 status=SUCCESS**：
+        # 它会回报「文件已创建」，路径却在 scratch 底下；让它读代码它看到空目录。
+        # 这是实测出来的，静默错得最狠的一个坑。
+        argv = agy.build_argv("agy", model="m", mode="plan",
+                              workspace=Path("/proj"))
+        self.assertIn("--add-dir", argv)
+        self.assertEqual(argv[argv.index("--add-dir") + 1], str(Path("/proj")))
 
     def test_json_output_and_schema(self):
         argv = agy.build_argv("agy", model="m", mode="plan",
                               schema_path=Path("s.json"))
         self.assertEqual(argv[argv.index("--output-format") + 1], "json")
         self.assertEqual(argv[argv.index("--json-schema") + 1], "s.json")
-
-    def test_slash_commands_disabled(self):
-        # 提示词里的 /xxx 是数据，不该被当成 slash command 展开
-        self.assertIn("--disable-slash-commands",
-                      agy.build_argv("agy", model="m", mode="plan"))
 
     def test_timeout_formatted_for_go_duration(self):
         argv = agy.build_argv("agy", model="m", mode="plan", timeout_sec=900)
