@@ -75,3 +75,68 @@ class TestPorcelainParsing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSingleCommitPerRun(unittest.TestCase):
+    """跑了几轮是这套系统内部的事，不该泄进目标仓库的历史。
+
+    原本是一轮一个提交，于是别人的仓库里会平白多出「hypoloop 第 1 轮 / 第 2 轮」
+    两条记录 —— 对仓库的主人来说这是实现细节噪音。现在整个 run 收一个提交，
+    每轮的裁决放进提交信息正文，信息不丢。
+    """
+
+    def _capture(self, rounds, changed=("js/game.js",)):
+        import hypoloop.loop as loop
+
+        calls = []
+        orig_git, orig_changed = loop.run_git, loop._changed_paths
+        loop._changed_paths = lambda t: list(changed)
+        loop.run_git = lambda root, *a: (calls.append(a), (0, ""))[1]
+        try:
+            loop._commit_run("t", "让它跑得更快", rounds, lambda s: None)
+        finally:
+            loop.run_git, loop._changed_paths = orig_git, orig_changed
+        return calls
+
+    def test_exactly_one_commit(self):
+        rounds = [{"round": 1, "verify": {"kept": ["H1"]}},
+                  {"round": 2, "verify": {"kept": ["H4"]}}]
+        commits = [c for c in self._capture(rounds) if c and c[0] == "commit"]
+        self.assertEqual(len(commits), 1)
+
+    def test_subject_is_the_task_not_a_round_label(self):
+        rounds = [{"round": 1, "verify": {"kept": ["H1"]}}]
+        msg = [c for c in self._capture(rounds) if c[0] == "commit"][0][-1]
+        self.assertTrue(msg.startswith("让它跑得更快"), msg[:60])
+        self.assertNotIn("第 1 轮：让它跑得更快", msg)
+
+    def test_round_verdicts_survive_in_the_body(self):
+        rounds = [{"round": 1, "verify": {"kept": ["H1"], "reverted": ["H2", "H3"],
+                                          "summary": "抬阈值把霓虹斩没了"}},
+                  {"round": 2, "verify": {"kept": ["H4"]}}]
+        msg = [c for c in self._capture(rounds) if c[0] == "commit"][0][-1]
+        for token in ("第 1 轮", "第 2 轮", "H1", "H2", "H3", "H4",
+                      "实证保留", "证伪回滚", "抬阈值把霓虹斩没了"):
+            self.assertIn(token, msg)
+
+    def test_no_commit_when_nothing_changed(self):
+        calls = self._capture([{"round": 1, "verify": {}}], changed=())
+        self.assertEqual([c for c in calls if c and c[0] == "commit"], [])
+
+    def test_junk_is_never_added(self):
+        rounds = [{"round": 1, "verify": {"kept": ["H1"]}}]
+        calls = self._capture(rounds, changed=("js/game.js", "shot-1.png",
+                                               "node_modules/pw/x.js"))
+        adds = [c for c in calls if c and c[0] == "add"]
+        self.assertEqual(len(adds), 1)
+        self.assertIn("js/game.js", adds[0])
+        self.assertNotIn("shot-1.png", adds[0])
+        self.assertNotIn("node_modules/pw/x.js", adds[0])
+
+    def test_aborted_round_still_records_why(self):
+        # 中途崩了也要落地，并且在提交信息里交代清楚
+        rounds = [{"round": 1, "verify": {"kept": ["H1"]}},
+                  {"round": 2, "error": "工作区指纹变了：假设者动了文件"}]
+        msg = [c for c in self._capture(rounds) if c[0] == "commit"][0][-1]
+        self.assertIn("中止", msg)
+        self.assertIn("指纹", msg)

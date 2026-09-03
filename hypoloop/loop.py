@@ -160,8 +160,6 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
             rounds.append(_one_round(
                 i, total_rounds, task, target, cfg, rounds, run_dir, ledger,
                 dry_run=dry_run, resume=resuming, log=log))
-            if commit and git and not dry_run:
-                _commit_round(target, i, task, log)
     except WorktreeChanged as e:
         log("")
         log("!! 不变量被破坏，循环中止：\n{0}".format(e))
@@ -170,6 +168,12 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
         log("")
         log("!! {0}".format(e))
         rounds.append({"round": len(rounds) + 1, "error": str(e)})
+
+    # 跑几轮是这套系统内部的事，不该泄进目标仓库的历史 —— 整个 run 收一个提交。
+    # 放在 except 外面：中途崩了也要把已经改出来的东西落下来，别让它悬着。
+    if commit and git and not dry_run:
+        log("")
+        _commit_run(target, task, rounds, log)
 
     log("")
     quota_after = probe(model=cfg["model"])
@@ -322,32 +326,61 @@ def _step(role: str, prompt: str, target: Path, cfg: Dict[str, Any],
     return call.data
 
 
-def _commit_round(target: Path, i: int, task: str,
-                  log: Callable[[str], None]) -> None:
-    """只提交源码改动。取证残渣挑出来、留在磁盘上、大声报出来，不塞进历史。"""
+def _round_notes(rounds: List[Dict[str, Any]]) -> List[str]:
+    """把每轮的裁决压成几行，放进提交信息的正文。
+
+    对外只该有一个提交 —— 跑了几轮是这套系统自己的事，不该泄进目标仓库的历史。
+    但「哪条被实证、哪条被证伪回滚了」是有价值的，塞进 body 留个交代。
+    """
+    lines: List[str] = []
+    for r in rounds:
+        v = r.get("verify") or {}
+        if not v and not r.get("error"):
+            continue
+        bits = []
+        if v.get("kept"):
+            bits.append("实证保留 " + ", ".join(map(str, v["kept"])))
+        if v.get("reverted"):
+            bits.append("证伪回滚 " + ", ".join(map(str, v["reverted"])))
+        if r.get("error"):
+            bits.append("中止：" + str(r["error"])[:120])
+        head = "第 {0} 轮".format(r.get("round"))
+        lines.append("{0}：{1}".format(head, "；".join(bits) if bits else "无结论"))
+        if v.get("summary"):
+            lines.append("  " + str(v["summary"]).strip().replace("\n", " ")[:300])
+    return lines
+
+
+def _commit_run(target: Path, task: str, rounds: List[Dict[str, Any]],
+                log: Callable[[str], None]) -> None:
+    """整个 run 收一个提交。只提交源码改动。
+
+    取证残渣挑出来、留在磁盘上、大声报出来，不塞进历史。
+    """
     paths = _changed_paths(target)
     if not paths:
-        log("  （这一轮没有改动，不提交）")
+        log("这次没有任何改动，不提交。")
         return
     junk = [p for p in paths if _is_junk(p)]
     good = [p for p in paths if not _is_junk(p)]
 
     if junk:
-        log("  !! 验证者在仓库里留下了取证残渣，**这些没有被提交**，还在磁盘上：")
+        log("!! 验证者在仓库里留下了取证残渣，**这些没有被提交**，还在磁盘上：")
         for p in junk[:20]:
-            log("       " + p)
+            log("     " + p)
         if len(junk) > 20:
-            log("       …另有 {0} 个".format(len(junk) - 20))
-        log("     （自己看一眼要不要删。取证工具不该留在目标仓库里。）")
+            log("     …另有 {0} 个".format(len(junk) - 20))
+        log("   （自己看一眼要不要删。取证工具不该留在目标仓库里。）")
 
     if not good:
-        log("  这一轮除了残渣没有源码改动，不提交")
+        log("除了残渣没有源码改动，不提交。")
         return
 
     run_git(target, "add", "--", *good)
-    msg = "hypoloop 第 {0} 轮：{1}".format(i, task)
+    body = _round_notes(rounds)
+    msg = task if not body else task + "\n\n" + "\n".join(body)
     code, out = run_git(target, "commit", "-m", msg)
     if code != 0:
-        log("  提交失败：{0}".format(out.strip()[:400]))
+        log("提交失败：{0}".format(out.strip()[:400]))
     else:
-        log("  已提交第 {0} 轮的 {1} 个文件".format(i, len(good)))
+        log("已提交 {0} 个文件（整个 run 一个提交）。".format(len(good)))

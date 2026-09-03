@@ -64,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="给验证者的取证建议，比如「用无头浏览器截图对比」。"
                         "不填它自己看着办。")
     p.add_argument("--commit", action="store_true",
-                   help="每轮改动提交到 hypoloop/<run> 分支，方便 diff 和整体回退")
+                   help="整个 run 的改动收成一个提交，放在 hypoloop/<run> 分支上")
     p.add_argument("--allow-dirty", action="store_true",
                    help="目标不是 git 仓库、或工作区不干净时也硬跑")
     p.add_argument("--resume", metavar="RUN_DIR",

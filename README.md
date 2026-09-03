@@ -84,7 +84,7 @@ pip install git+https://github.com/flufy3d/hypoloop
 ```bash
 hypoloop "任务描述"                      # 在目标项目目录里跑，默认 2 轮
 hypoloop "任务" -C /path/to/project      # 或者指定目录
-hypoloop "任务" --rounds 3 --commit      # 每轮提交到 hypoloop/<run> 分支
+hypoloop "任务" --rounds 3 --commit      # 收一个提交到 hypoloop/<run> 分支
 hypoloop "任务" --dry-run                # 只打印将要发的提示词，一个 token 不花
 hypoloop "任务" --evidence-hint "用无头浏览器截图对比首屏"
 hypoloop quota                           # 只看额度
@@ -99,7 +99,7 @@ hypoloop history                         # 看历史 token 账
 | `--hypotheses N` | 每轮提几条假设（默认 3） |
 | `--model` / `--verifier-model` | 分别指定只读角色和验证者的模型 |
 | `--evidence-hint` | 给验证者的取证建议；**默认空，通常就该空着**（见下） |
-| `--commit` | 每轮改动单独提交，方便 diff 和整体回退 |
+| `--commit` | 整个 run 的改动**收成一个提交**，放在 `hypoloop/<run>` 分支上 |
 | `--allow-dirty` | 目标不是 git 仓库、或工作区不干净时也硬跑 |
 | `--save-config` | 把本次参数存成这个项目的默认值 |
 
