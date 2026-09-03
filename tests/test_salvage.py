@@ -92,3 +92,81 @@ class TestSalvage(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDegradedIsNotFailure(unittest.TestCase):
+    """agy 报错但产出完整时，不许当成失败丢掉。
+
+    实际撞到的那次：status=ERROR + "The stream was interrupted. Please continue
+    the task you were working on."，可 returncode=0、structured_output 完整、
+    response 里连收尾总结都写完了。原先只看 status，于是一份含 5 条 evidence
+    （其中还有一条 refuted）的完整验证结果被整个丢弃，还倒贴一次续接的额度，
+    最后在提交信息里写成「第 2 轮：中止」。
+    """
+
+    REAL = {
+        "status": "ERROR",
+        "error": "The stream was interrupted. Please continue the task you were working on.",
+        "returncode": 0,
+        "conversation_id": "69d497f8-a47c-40b3-b976-dd529bd09760",
+        "usage": {"total_tokens": 1005704},
+        "structured_output": {"changes": [], "evidence": [{"verdict": "refuted"}],
+                              "kept": [], "reverted": ["h1"], "summary": "干完了"},
+    }
+
+    def test_degraded_call_is_usable(self):
+        call = agy.AgyCall(self.REAL)
+        self.assertFalse(call.ok)          # 信封确实是 ERROR
+        self.assertTrue(call.degraded)     # 但产出是完整的
+        self.assertTrue(call.usable)
+        self.assertEqual(call.data["reverted"], ["h1"])
+
+    def test_real_failure_is_not_degraded(self):
+        for bad in ({"status": "ERROR", "usage": {}},
+                    {"status": "TIMEOUT", "structured_output": None},
+                    {"status": "PARSE_ERROR", "structured_output": "不是 dict"}):
+            call = agy.AgyCall(bad)
+            self.assertFalse(call.degraded, bad)
+            self.assertFalse(call.usable, bad)
+
+    def test_success_is_not_degraded(self):
+        call = agy.AgyCall({"status": "SUCCESS", "structured_output": {"a": 1}})
+        self.assertTrue(call.ok)
+        self.assertFalse(call.degraded)
+        self.assertTrue(call.usable)
+
+
+class TestSalvageBilling(unittest.TestCase):
+    """抢救失败也烧了额度，不记账的话账本会比真实额度跌幅少一截。"""
+
+    def _run(self, rescued_blob):
+        billed = []
+        orig = agy.run_agy
+        agy.run_agy = lambda *a, **k: agy.AgyCall(rescued_blob)
+        try:
+            out = agy.salvage(
+                agy.AgyCall({"status": "ERROR", "conversation_id": "c1"}),
+                cwd=Path("."), model="m", mode="accept-edits",
+                on_attempt=billed.append)
+        finally:
+            agy.run_agy = orig
+        return out, billed
+
+    def test_failed_salvage_is_still_billed(self):
+        out, billed = self._run({"status": "ERROR", "usage": {"total_tokens": 4321}})
+        self.assertIsNone(out)                       # 没救回来
+        self.assertEqual(len(billed), 1)             # 但账记上了
+        self.assertEqual(billed[0].total_tokens, 4321)
+
+    def test_successful_salvage_is_billed_once(self):
+        out, billed = self._run({"status": "SUCCESS", "structured_output": {"a": 1},
+                                 "usage": {"total_tokens": 99}})
+        self.assertIsNotNone(out)
+        self.assertEqual(len(billed), 1)
+
+    def test_no_conversation_means_no_call_and_no_bill(self):
+        billed = []
+        out = agy.salvage(agy.AgyCall({"status": "ERROR"}), cwd=Path("."),
+                          model="m", mode="accept-edits", on_attempt=billed.append)
+        self.assertIsNone(out)
+        self.assertEqual(billed, [])

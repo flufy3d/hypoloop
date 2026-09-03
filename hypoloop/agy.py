@@ -16,7 +16,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 # agy 装完默认**不在 PATH 上**(得手动跑 `agy install`),所以自己找一遍。
 _AGY_FALLBACKS = [
@@ -63,6 +63,25 @@ class AgyCall(dict):
     def data(self) -> Optional[Dict[str, Any]]:
         out = self.get("structured_output")
         return out if isinstance(out, dict) else None
+
+    @property
+    def degraded(self) -> bool:
+        """agy 报了错，但结构化产出是完整的。
+
+        实际撞到过：agy 返回 `status: ERROR` + `"The stream was interrupted.
+        Please continue the task you were working on."`，然而 `returncode` 是 0、
+        `structured_output` 完整、`response` 里连收尾总结都写完了 —— 也就是说
+        agent 真的把活干完了，中断的只是中途某一段流，agy 自己接上继续跑完了，
+        但信封上的 status 没改回来。
+
+        原先只看 status，于是这份完整产出被整个丢掉，还倒贴一次续接调用的额度。
+        有产出就认，别信信封。
+        """
+        return (not self.ok) and self.data is not None
+
+    @property
+    def usable(self) -> bool:
+        return self.data is not None
 
     @property
     def total_tokens(self) -> int:
@@ -222,10 +241,15 @@ SALVAGE_PROMPT = (
 
 def salvage(call: AgyCall, *, cwd: Path, model: str, mode: str,
             schema_path: Optional[Path] = None, timeout_sec: int = 300,
-            binary: Optional[str] = None) -> Optional[AgyCall]:
+            binary: Optional[str] = None,
+            on_attempt: Optional[Callable[[AgyCall], None]] = None
+            ) -> Optional[AgyCall]:
     """一步超时/出错后,续接它的会话,只把结果要回来。
 
     拿不回来就返回 None —— 抢救失败不该再制造一个新问题。
+
+    但**失败的抢救也是真花了额度的**。只把成功的记进账本，账就对不上用户看到的
+    额度跌幅。所以不管成不成，都先把这次调用交给 `on_attempt` 记一笔。
     """
     conv = call.get("conversation_id")
     if not conv:
@@ -236,4 +260,6 @@ def salvage(call: AgyCall, *, cwd: Path, model: str, mode: str,
         conversation_id=str(conv),
     )
     out["salvaged_from"] = conv
-    return out if (out.ok and out.data is not None) else None
+    if on_attempt is not None:
+        on_attempt(out)
+    return out if out.usable else None

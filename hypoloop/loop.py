@@ -306,17 +306,25 @@ def _step(role: str, prompt: str, target: Path, cfg: Dict[str, Any],
     ledger.add(role, round_no, call)
     report.dump_json(run_dir / (stem + ".raw.json"), dict(call))
 
-    if not call.ok or call.data is None:
+    if call.degraded:
+        # 有完整产出就认，别信信封上的 status。详见 AgyCall.degraded 的注释。
+        log("    agy 报了 {0}，但结构化产出是完整的，直接用（不重跑、不续接）。".format(
+            call.get("status")))
+        log("      agy 的原话：{0}".format(str(call.get("error") or "").strip()[:200]))
+
+    if not call.usable:
         # 超时/出错不等于白干。agy 到点就丢弃 agent 已完成的工作，但那段会话还在，
         # 接上去只把结果要回来 —— 实测能从一次跑满 45 分钟的超时里捞回完整结论。
         log("    这一步没拿到结果（{0}），试着续接会话把已做的工作要回来…".format(
             call.get("status")))
+        # 抢救失败也是真花了额度的，先记账再判成败，否则账本会比实际额度跌幅少一截。
         rescued = salvage(call, cwd=target, model=model, mode=mode,
                           schema_path=config.schema(schema_name),
-                          timeout_sec=SALVAGE_TIMEOUT_SEC)
+                          timeout_sec=SALVAGE_TIMEOUT_SEC,
+                          on_attempt=lambda c: ledger.add(
+                              role + "(续接)", round_no, c))
         if rescued is None:
             raise LoopError(_role_failed(role, call))
-        ledger.add(role + "(续接)", round_no, rescued)
         report.dump_json(run_dir / (stem + ".salvage.json"), dict(rescued))
         log("    捞回来了，多花 {0:,} tokens".format(rescued.total_tokens))
         call = rescued
