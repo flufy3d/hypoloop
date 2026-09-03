@@ -103,7 +103,7 @@ hypoloop history                         # 看历史 token 账
 | `--allow-dirty` | 目标不是 git 仓库、或工作区不干净时也硬跑 |
 | `--save-config` | 把本次参数存成这个项目的默认值 |
 
-## 五件它认真对待的事
+## 六件它认真对待的事
 
 ### 1. 「只有验证者能改文件」是**机制**，不是提示词里的一句请求
 
@@ -188,6 +188,39 @@ v1internal:retrieveUserQuotaSummary
 [#638](https://github.com/google-antigravity/antigravity-cli/issues/638) /
 [#629](https://github.com/google-antigravity/antigravity-cli/issues/629)。坏的只是 agy
 内置的那个 Go 驱动，npm 上的 playwright 包是另一套东西，正常可用。）
+
+### 6. 别信信封，看产出 —— 以及一条防止再犯的自查
+
+这套东西的立论是「别信 agent 的声明，看它测出来的读数」。结果它自己栽在同一个坑里。
+
+一次验证者调用返回了：
+
+```
+status            : ERROR
+error             : The stream was interrupted. Please continue the task you were working on.
+returncode        : 0            ← 正常退出
+structured_output : 完整
+response          : 连收尾总结都写完了
+```
+
+agent 真的把活干完了，中断的只是中途某一段流，agy 自己接上继续跑完，**只是信封上的
+`status` 没改回来**。而 `AgyCall.ok` 只认 `status == "SUCCESS"`，于是这份完整产出被
+整个丢弃、转去续接、续接没成、整轮判死。代价：一份含 4 条实证 1 条证伪的验证结果消失，
+倒贴一次续接的额度，还在目标仓库的提交信息里写下一句假话（「第 2 轮：中止」）。
+
+**修法分两层。**
+
+一层是具体的：`AgyCall.degraded` —— 有完整产出就认，别信信封，同时把 agy 报了什么
+如实打出来，不静默吞掉。
+
+另一层是防这**一整类**的：`audit.py`。同样的错误还能从别的地方再犯 —— 提前 return、
+schema 名改了导致产出落到别的文件名下、异常路径上漏了一次写盘。自查不去猜将来会
+怎么错，只做一件事：**比对磁盘**。每步都会写 `<stem>.raw.json`（agy 原始返回）和
+`<stem>.json`（采纳后的产出），凡是「raw 里有可用产出、却没有对应的 .json」的，就是
+被丢掉的工作，跑完在提交**之前**大声报出来。这个判据不依赖任何一处具体逻辑，将来
+换了实现照样成立。
+
+拿 5 个历史运行目录实测过：精确抓到那 1 次事故，对另外 4 个保持沉默。
 
 ## 产物落在哪
 

@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from . import config, report
+from . import audit, config, report
 from .agy import MODE_READONLY, MODE_WRITE, AgyCall, run_agy, salvage
 from .guard import ReadOnlyGuard, WorktreeChanged, is_git_repo, run_git
 from .ledger import Ledger
@@ -168,6 +168,13 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
         log("")
         log("!! {0}".format(e))
         rounds.append({"round": len(rounds) + 1, "error": str(e)})
+
+    # 自查：有没有哪一步 agy 给了完整产出、我们却没采纳。放在提交之前 —— 万一真丢了
+    # 东西，人得在那句「已提交」之前先看到，而不是事后从日志里翻。详见 audit.py。
+    dropped = audit.render(run_dir) if not dry_run else ""
+    if dropped:
+        log("")
+        log(dropped)
 
     # 跑几轮是这套系统内部的事，不该泄进目标仓库的历史 —— 整个 run 收一个提交。
     # 放在 except 外面：中途崩了也要把已经改出来的东西落下来，别让它悬着。
