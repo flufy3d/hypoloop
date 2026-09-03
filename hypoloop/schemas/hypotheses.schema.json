@@ -1,0 +1,64 @@
+{
+  "type": "object",
+  "properties": {
+    "understanding": {
+      "type": "string",
+      "description": "对任务和当前代码现状的一句话概括"
+    },
+    "hypotheses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "短 id，如 h1-bloom-threshold"
+          },
+          "claim": {
+            "type": "string",
+            "description": "一句可证伪的断言"
+          },
+          "rationale": {
+            "type": "string",
+            "description": "依据，要引用具体文件和行/符号"
+          },
+          "predicted_observable": {
+            "type": "string",
+            "description": "如果成立，哪个可测量的量会怎么变（截图指标/FPS/console/像素统计），必须具体到能对比数字"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "approach": {
+            "type": "string",
+            "description": "打算怎么改"
+          },
+          "risk": {
+            "type": "string",
+            "description": "可能的副作用"
+          },
+          "confidence": {
+            "type": "number",
+            "description": "0-1"
+          }
+        },
+        "required": [
+          "id",
+          "claim",
+          "rationale",
+          "predicted_observable",
+          "files",
+          "approach",
+          "confidence"
+        ]
+      }
+    }
+  },
+  "required": [
+    "understanding",
+    "hypotheses"
+  ]
+}

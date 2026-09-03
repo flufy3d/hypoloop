@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hypoloop"
+version = "0.1.0"
+description = "假设者 / 质疑者 / 验证者 —— 跑在 agy (Antigravity CLI) 上的三角色实证循环"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "flufy3d" }]
+keywords = ["agent", "multi-agent", "antigravity", "gemini", "cli"]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/flufy3d/hypoloop"
+
+[project.scripts]
+hypoloop = "hypoloop.cli:main"
+
+[tool.setuptools]
+packages = ["hypoloop", "hypoloop.roles"]
+
+[tool.setuptools.package-data]
+hypoloop = ["schemas/*.json"]

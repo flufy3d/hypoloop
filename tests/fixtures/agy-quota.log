@@ -1,0 +1,161 @@
+ERROR: logging before google.Init: I0903 17:17:05.870543     168 http_helpers.go:324] Response from https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist:
+{
+  "currentTier": {
+    "id": "free-tier",
+    "name": "Antigravity",
+    "description": "Gemini-powered code suggestions and chat in multiple IDEs",
+    "privacyNotice": {
+      "showNotice": true,
+      "noticeText": "This notice and our Privacy Policy - https://policies.google.com/privacy - describe how Gemini Code Assist for individuals handles your data. Please read them carefully.\n\nWhen you use Gemini Code Assist for individuals, Google collects your prompts, related code, generated output, code edits, related feature usage information, and your feedback to provide, improve, and develop Google products and services and machine learning technologies.\n\nTo help with quality and improve our products (such as generative machine-learning models), human reviewers may read, annotate, and process the data collected above. We take steps to protect your privacy as part of this process. This includes disconnecting the data from your Google Account before reviewers see or annotate it, and storing those disconnected copies for up to 18 months. Please don't submit confidential information or any data you wouldn't want a reviewer to see or Google to use to improve our products, services, and machine-learning technologies.\n\nIf you don't want this data used to improve Google's machine learning models, you can opt out below."
+    },
+    "upgradeSubscriptionUri": "https://accounts.google.com/AccountChooser?Email=flufy3d%40gmail.com&continue=https%3A%2F%2Fone.google.com%2Fai",
+    "upgradeSubscriptionText": "Upgrade to get 1,500 model requests per day with Gemini CLI and Gemini Code Assist's agent mode with Google AI Pro.",
+    "upgradeSubscriptionType": "GOOGLE_ONE"
+  },
+  "allowedTiers": [
+    {
+      "id": "free-tier",
+      "name": "Antigravity",
+      "description": "Gemini-powered code suggestions and chat in multiple IDEs",
+      "privacyNotice": {
+        "showNotice": true,
+        "noticeText": "This notice and our Privacy Policy - https://policies.google.com/privacy - describe how Gemini Code Assist for individuals handles your data. Please read them carefully.\n\nWhen you use Gemini Code Assist for individuals, Google collects your prompts, related code, generated output, code edits, related feature usage information, and your feedback to provide, improve, and develop Google products and services and machine learning technologies.\n\nTo help with quality and improve our products (such as generative machine-learning models), human reviewers may read, annotate, and process the data collected above. We take steps to protect your privacy as part of this process. This includes disconnecting the data from your Google Account before reviewers see or annotate it, and storing those disconnected copies for up to 18 months. Please don't submit confidential information or any data you wouldn't want a reviewer to see or Google to use to improve our products, services, and machine-learning technologies.\n\nIf you don't want this data used to improve Google's machine learning models, you can opt out below."
+      },
+      "isDefault": true
+    },
+    {
+      "id": "standard-tier",
+      "name": "Antigravity",
+      "description": "Unlimited coding assistant with the most powerful Gemini models",
+      "userDefinedCloudaicompanionProject": true,
+      "privacyNotice": {},
+      "usesGcpTos": true
+    }
+  ],
+  "cloudaicompanionProject": "aicode-consumers",
+  "gcpManaged": false,
+  "upgradeSubscriptionUri": "https://codeassist.google.com/upgrade",
+  "paidTier": {
+    "id": "g1-pro-tier",
+    "name": "Google AI Pro",
+    "description": "Google AI Pro",
+    "upgradeSubscriptionUri": "https://antigravity.google/g1-upgrade",
+    "upgradeSubscriptionText": "You can upgrade to a Google AI Ultra plan to receive higher rate limits.",
+    "availableCredits": [
+      {
+        "creditType": "GOOGLE_ONE_AI",
+        "minimumCreditAmountForUsage": "50"
+      }
+    ]
+  }
+}
+ERROR: logging before google.Init: I0903 17:17:05.871200     171 auth_provider.go:880] [AuthProvider] ResolveAuthMode: personal consumer mode
+ERROR: logging before google.Init: I0903 17:17:05.871200     169 auth_provider.go:880] [AuthProvider] ResolveAuthMode: personal consumer mode
+ERROR: logging before google.Init: I0903 17:17:05.871787     169 auth_provider.go:880] [AuthProvider] ResolveAuthMode: personal consumer mode
+ERROR: logging before google.Init: I0903 17:17:05.871738     171 auth_provider.go:880] [AuthProvider] ResolveAuthMode: personal consumer mode
+ERROR: logging before google.Init: I0903 17:17:05.871787     166 auth_provider.go:880] [AuthProvider] ResolveAuthMode: personal consumer mode
+ERROR: logging before google.Init: I0903 17:17:05.871787     165 auth_provider.go:880] [AuthProvider] ResolveAuthMode: personal consumer mode
+ERROR: logging before google.Init: I0903 17:17:05.871787     165 auth_provider.go:880] [AuthProvider] ResolveAuthMode: personal consumer mode
+ERROR: logging before google.Init: I0903 17:17:05.871787     166 auth_provider.go:880] [AuthProvider] ResolveAuthMode: personal consumer mode
+ERROR: logging before google.Init: I0903 17:17:06.000965     169 http_helpers.go:299] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAdminControls Trace: 0xcb773833bc4ea76d
+ERROR: logging before google.Init: I0903 17:17:06.000965     169 http_helpers.go:312] Request User-Agent to https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAdminControls:
+User-Agent: antigravity/cli/1.1.25 (aidev_client; os_type=windows; arch=amd64; cl=975399401; auth_method=consumer)
+ERROR: logging before google.Init: I0903 17:17:06.000965     169 http_helpers.go:318] Response Headers from https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAdminControls:
+X-Cloudaicompanion-Trace-Id: cb773833bc4ea76d
+Content-Type: application/json; charset=UTF-8
+Server: ESF
+Server-Timing: gfet5t7;dur=0, gfet4t7; dur=125
+Alt-Svc: h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+Vary: Origin, X-Origin, Referer
+Date: Thu, 03 Sep 2026 15:17:03 GMT
+X-Xss-Protection: 0
+X-Frame-Options: SAMEORIGIN
+X-Content-Type-Options: nosniff
+ERROR: logging before google.Init: I0903 17:17:06.000965     169 http_helpers.go:324] Response from https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAdminControls:
+{}
+ERROR: logging before google.Init: I0903 17:17:06.073440     165 http_helpers.go:299] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:fetchUserInfo
+ERROR: logging before google.Init: I0903 17:17:06.073440     165 http_helpers.go:312] Request User-Agent to https://daily-cloudcode-pa.googleapis.com/v1internal:fetchUserInfo:
+User-Agent: antigravity/cli/1.1.25 (aidev_client; os_type=windows; arch=amd64; cl=975399401; auth_method=consumer)
+ERROR: logging before google.Init: I0903 17:17:06.073440     165 http_helpers.go:318] Response Headers from https://daily-cloudcode-pa.googleapis.com/v1internal:fetchUserInfo:
+X-Frame-Options: SAMEORIGIN
+
+ERROR: logging before google.Init: I0903 17:17:06.121364     171 http_helpers.go:324] Response from https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary:
+{
+  "groups": [
+    {
+      "buckets": [
+        {
+          "bucketId": "gemini-weekly",
+          "displayName": "Weekly Limit Remaining",
+          "window": "weekly",
+          "resetTime": "2026-09-10T15:08:08Z",
+          "description": "You have used some of your weekly limit, it will fully refresh in 6 days, 23 hours.",
+          "remainingFraction": 0.9995751
+        },
+        {
+          "bucketId": "gemini-5h",
+          "displayName": "Five Hour Limit Remaining",
+          "window": "5h",
+          "resetTime": "2026-09-03T20:08:08Z",
+          "description": "You have used some of your 5-hour limit, it will fully refresh in 4 hours, 51 minutes.",
+          "remainingFraction": 0.9974506
+        }
+      ],
+      "displayName": "Gemini Models",
+      "description": "Models within this group: Gemini Flash, Gemini Pro"
+    },
+    {
+      "buckets": [
+        {
+          "bucketId": "3p-weekly",
+          "displayName": "Weekly Limit Remaining",
+          "window": "weekly",
+          "resetTime": "2026-09-10T15:17:03Z",
+          "remainingFraction": 1
+        },
+        {
+          "bucketId": "3p-5h",
+          "displayName": "Five Hour Limit Remaining",
+          "window": "5h",
+          "resetTime": "2026-09-03T20:17:03Z",
+          "remainingFraction": 1
+        }
+      ],
+      "displayName": "Claude and GPT models",
+      "description": "Models within this group: Claude Opus, Claude Sonnet, GPT-OSS"
+    }
+  ],
+  "description": "Within each group, models share a weekly limit and a 5-hour limit. Quota is consumed proportionally to the cost of the tokens. Thus, limits will last longer with shorter tasks or using more cost-effective models. The 5-hour limit smooths out aggregate demand to fairly distribute global capacity across all users, while your weekly limit is tied directly to your individual tier."
+}
+ERROR: logging before google.Init: I0903 17:17:06.181757     166 http_helpers.go:296] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels Trace: 0x801e4ca6d4c9255a
+ERROR: logging before google.Init: I0903 17:17:06.181757     166 http_helpers.go:312] Request User-Agent to https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels:
+User-Agent: antigravity/cli/1.1.25 (aidev_client; os_type=windows; arch=amd64; cl=975399401; auth_method=consumer)
+ERROR: logging before google.Init: I0903 17:17:06.181757     166 http_helpers.go:318] Response Headers from https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels:
+Content-Type: application/json; charset=UTF-8
+Vary: Origin, X-Origin, Referer
+Date: Thu, 03 Sep 2026 15:17:03 GMT
+X-Frame-Options: SAMEORIGIN
+X-Content-Type-Options: nosniff
+Server-Timing: gfet4t7; dur=257
+X-Cloudaicompanion-Trace-Id: 801e4ca6d4c9255a
+Server: ESF
+X-Xss-Protection: 0
+Alt-Svc: h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+ERROR: logging before google.Init: I0903 17:17:06.189532     166 http_helpers.go:324] Response from https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels:
+{
+  "models": {
+    "chat_20706": {
+      "maxTokens": 16384,
+      "quotaInfo": {
+        "remainingFraction": 1
+      },
+      "model": "MODEL_CHAT_20706",
+      "apiProvider": "API_PROVIDER_INTERNAL",
+      "modelProvider": "MODEL_PROVIDER_GOOGLE",
+      "supportsCumulativeContext": true,
+      "tabJumpPrintLineRange": true,
+      "supportsEstimateTokenCounter": true,
+      "isInternal": true,
+      "addCursorToFindReplaceTarget": true,
+      "promptTemplaterType": "PROMPT_TEMPLATER_TYPE_CHATML",
+      "toolFormatterType": "TOOL_FORMATTER_TYPE_XML",

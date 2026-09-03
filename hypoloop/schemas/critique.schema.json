@@ -1,0 +1,99 @@
+{
+  "type": "object",
+  "properties": {
+    "critiques": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "hypothesis_id": {
+            "type": "string"
+          },
+          "flaw": {
+            "type": "string",
+            "description": "具体缺陷：事实错误 / 不可证伪 / 证据不支持 / 有更简单解释 / 副作用被低估"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "keep",
+              "revise",
+              "reject"
+            ]
+          },
+          "revision": {
+            "type": "string",
+            "description": "verdict=revise 时给出改法"
+          }
+        },
+        "required": [
+          "hypothesis_id",
+          "flaw",
+          "severity",
+          "verdict"
+        ]
+      }
+    },
+    "counter_hypotheses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "claim": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "predicted_observable": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "approach": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "claim",
+          "rationale",
+          "predicted_observable",
+          "files",
+          "approach",
+          "confidence"
+        ]
+      }
+    },
+    "priority_order": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "建议验证者按这个顺序动手，最该先被实证的排最前"
+    }
+  },
+  "required": [
+    "critiques",
+    "counter_hypotheses",
+    "priority_order"
+  ]
+}

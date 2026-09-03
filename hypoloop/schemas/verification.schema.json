@@ -1,0 +1,100 @@
+{
+  "type": "object",
+  "properties": {
+    "summary": {
+      "type": "string"
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "hypothesis_id": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "hypothesis_id",
+          "summary"
+        ]
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "hypothesis_id": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string",
+            "description": "怎么测的"
+          },
+          "before": {
+            "type": "string",
+            "description": "改之前的具体读数"
+          },
+          "after": {
+            "type": "string",
+            "description": "改之后的具体读数"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "supported",
+              "refuted",
+              "inconclusive"
+            ]
+          },
+          "reasoning": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hypothesis_id",
+          "method",
+          "before",
+          "after",
+          "verdict",
+          "reasoning"
+        ]
+      }
+    },
+    "kept": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "保留下来的假设 id"
+    },
+    "reverted": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "被证伪并已回滚的假设 id"
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "summary",
+    "changes",
+    "evidence",
+    "kept",
+    "reverted",
+    "open_questions"
+  ]
+}
