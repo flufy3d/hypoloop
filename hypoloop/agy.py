@@ -78,6 +78,7 @@ def build_argv(
     schema_path: Optional[Path] = None,
     timeout_sec: int = 1800,
     extra_dirs: Optional[List[str]] = None,
+    conversation_id: Optional[str] = None,
 ) -> List[str]:
     """拼 agy 的命令行。
 
@@ -107,6 +108,8 @@ def build_argv(
         "--print-timeout", "{0}s".format(int(timeout_sec)),
         "--dangerously-skip-permissions",
     ]
+    if conversation_id:
+        argv += ["--conversation", conversation_id]
     if workspace is not None:
         argv += ["--add-dir", str(workspace)]
     if schema_path is not None:
@@ -125,12 +128,17 @@ def run_agy(
     schema_path: Optional[Path] = None,
     timeout_sec: int = 1800,
     binary: Optional[str] = None,
+    conversation_id: Optional[str] = None,
 ) -> AgyCall:
-    """跑一次 agy,返回解析后的结果。**从不抛**(除了找不到 agy)。"""
+    """跑一次 agy,返回解析后的结果。**从不抛**(除了找不到 agy)。
+
+    给 `conversation_id` 就是续接一段已有的会话(见 `salvage`)。
+    """
     bin_path = binary or agy_binary()
     argv = build_argv(
         bin_path, model=model, mode=mode, workspace=Path(cwd),
         schema_path=schema_path, timeout_sec=timeout_sec,
+        conversation_id=conversation_id,
     )
     try:
         proc = subprocess.run(
@@ -199,3 +207,33 @@ def parse_output(stdout: str) -> Optional[AgyCall]:
         if isinstance(blob, dict):
             return AgyCall(blob)
     return None
+
+
+# 让超时的那一步不至于血本无归。agy 的 print 模式有自己的 --print-timeout,到点就
+# 直接 status=ERROR / "timeout waiting for response",**它已经做完的工作全部丢弃**。
+# 实测过一次:验证者跑满 45 分钟、烧掉 12.6 万 token、做了 36 次输出,最后拿到的是
+# 一个空壳错误。但那段会话还在,`--conversation <id>` 能接上去。
+SALVAGE_PROMPT = (
+    "不要再做任何新工作,不要再改任何文件,不要再跑任何命令。"
+    "就把你到目前为止**已经完成的工作**和**已经真实测到的读数**,按给定的 JSON "
+    "schema 输出出来。没有测到的一律填 inconclusive,**绝对不许编造任何读数**。"
+)
+
+
+def salvage(call: AgyCall, *, cwd: Path, model: str, mode: str,
+            schema_path: Optional[Path] = None, timeout_sec: int = 300,
+            binary: Optional[str] = None) -> Optional[AgyCall]:
+    """一步超时/出错后,续接它的会话,只把结果要回来。
+
+    拿不回来就返回 None —— 抢救失败不该再制造一个新问题。
+    """
+    conv = call.get("conversation_id")
+    if not conv:
+        return None
+    out = run_agy(
+        SALVAGE_PROMPT, cwd=cwd, model=model, mode=mode,
+        schema_path=schema_path, timeout_sec=timeout_sec, binary=binary,
+        conversation_id=str(conv),
+    )
+    out["salvaged_from"] = conv
+    return out if (out.ok and out.data is not None) else None

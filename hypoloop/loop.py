@@ -6,12 +6,13 @@
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from . import config, report
-from .agy import MODE_READONLY, MODE_WRITE, AgyCall, run_agy
+from .agy import MODE_READONLY, MODE_WRITE, AgyCall, run_agy, salvage
 from .guard import ReadOnlyGuard, WorktreeChanged, is_git_repo, run_git
 from .ledger import Ledger
 from .quota import Quota, consumed, format_quota, probe
@@ -20,6 +21,67 @@ from .roles import challenger, hypothesizer, verifier
 
 class LoopError(RuntimeError):
     pass
+
+
+# 续接抢救只是把结论要回来，不该再干活，所以给个短超时。
+SALVAGE_TIMEOUT_SEC = 420
+
+# 取证过程留下的东西，绝不能跟着源码改动一起提交进目标仓库。验证者被要求自己清理，
+# 但那是提示词里的一句请求；这里是机制：提交前把它们挑出来，只 add 正当的源码改动，
+# 剩下的原样留在磁盘上并大声报出来，由人来处置。
+JUNK_DIRS = {
+    "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache",
+    ".playwright", "playwright-report", "test-results", ".hypoloop",
+    ".cache", "coverage", ".nyc_output",
+}
+JUNK_SUFFIXES = (".log", ".tmp", ".zip", ".7z", ".pyc")
+JUNK_NAME_HINTS = ("screenshot", "shot-", "before-", "after-", "baseline-",
+                   "hypoloop-", "-probe", "tmp_")
+
+
+def _is_junk(rel: str) -> bool:
+    parts = rel.replace("\\", "/").split("/")
+    if any(p in JUNK_DIRS for p in parts):
+        return True
+    name = parts[-1].lower()
+    if name.endswith(JUNK_SUFFIXES):
+        return True
+    return any(hint in name for hint in JUNK_NAME_HINTS)
+
+
+def _changed_paths(root: Path) -> List[str]:
+    code, out = run_git(root, "status", "--porcelain")
+    if code != 0:
+        return []
+    paths = []
+    for line in out.splitlines():
+        if len(line) < 4:
+            continue
+        rel = line[3:].strip().strip('"')
+        # 重命名是 "old -> new"，要的是新名字
+        if " -> " in rel:
+            rel = rel.split(" -> ", 1)[1]
+        if rel:
+            paths.append(rel)
+    return paths
+
+
+def _write_manifest(run_dir: Path, task: str, target: Path,
+                    cfg: Dict[str, Any]) -> None:
+    """把任务和目标记在运行目录里，`--resume` 才知道自己在续什么。"""
+    try:
+        (run_dir / "run.json").write_text(json.dumps(
+            {"task": task, "target": str(target), "config": cfg},
+            ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def load_manifest(run_dir: Path) -> Dict[str, Any]:
+    try:
+        return json.loads((Path(run_dir) / "run.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
 
 
 def _default_log(msg: str) -> None:
@@ -39,8 +101,15 @@ def _dirty(root: Path) -> str:
 
 def run(task: str, target: Path, cfg: Dict[str, Any], *,
         dry_run: bool = False, commit: bool = False, allow_dirty: bool = False,
+        resume_dir: Optional[Path] = None,
         log: Callable[[str], None] = _default_log) -> Dict[str, Any]:
-    """跑完整个循环。返回一个包含运行目录、各轮结果、账本的 dict。"""
+    """跑完整个循环。返回一个包含运行目录、各轮结果、账本的 dict。
+
+    `resume_dir` 指向一个已有的运行目录时，已经产出过结果的步骤直接复用，只补跑
+    缺的那些 —— 验证者超时不该逼着把假设者和质疑者重跑一遍（那是几十万 token 的
+    纯浪费，而且会把上一轮那份已经很扎实的质疑意见丢掉）。
+    """
+    resuming = resume_dir is not None
     target = Path(target).resolve()
     if not target.is_dir():
         raise LoopError("目标目录不存在：{0}".format(target))
@@ -50,18 +119,21 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
         raise LoopError(
             "{0} 不是 git 仓库。验证者会直接改文件，没有 git 就没有后悔药 —— "
             "先 `git init` 并提交一次，或者明知故犯加 --allow-dirty。".format(target))
-    if git and not allow_dirty:
+    if git and not allow_dirty and not resuming:
         dirty = _dirty(target)
         if dirty:
             raise LoopError(
                 "目标仓库有未提交的改动，先处理掉，否则分不清哪些是 hypoloop 改的：\n"
                 "{0}\n（真要在脏工作区上跑就加 --allow-dirty）".format(dirty))
 
-    run_dir = config.new_run_dir(task)
+    run_dir = Path(resume_dir) if resuming else config.new_run_dir(task)
+    if not run_dir.is_dir():
+        raise LoopError("要续跑的运行目录不存在：{0}".format(run_dir))
+    _write_manifest(run_dir, task, target, cfg)
     ledger = Ledger()
     rounds: List[Dict[str, Any]] = []
 
-    log("运行目录：{0}".format(run_dir))
+    log("运行目录：{0}{1}".format(run_dir, "（续跑）" if resuming else ""))
     log("目标项目：{0}{1}".format(target, "" if git else "（非 git）"))
     log("")
 
@@ -72,7 +144,9 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
     branch = None
     if commit and git:
         branch = "hypoloop/{0}".format(run_dir.name)
-        code, out = run_git(target, "checkout", "-b", branch)
+        _, cur = run_git(target, "rev-parse", "--abbrev-ref", "HEAD")
+        code, out = (0, "") if cur.strip() == branch else run_git(
+            target, "checkout", "-b", branch)
         if code != 0:
             log("建分支失败，就在当前分支上提交了：{0}".format(out.strip()))
             branch = None
@@ -85,7 +159,7 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
         for i in range(1, total_rounds + 1):
             rounds.append(_one_round(
                 i, total_rounds, task, target, cfg, rounds, run_dir, ledger,
-                dry_run=dry_run, log=log))
+                dry_run=dry_run, resume=resuming, log=log))
             if commit and git and not dry_run:
                 _commit_round(target, i, task, log)
     except WorktreeChanged as e:
@@ -133,7 +207,8 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
 
 def _one_round(i: int, total: int, task: str, target: Path, cfg: Dict[str, Any],
                history: List[Dict[str, Any]], run_dir: Path, ledger: Ledger,
-               *, dry_run: bool, log: Callable[[str], None]) -> Dict[str, Any]:
+               *, dry_run: bool, resume: bool = False,
+               log: Callable[[str], None]) -> Dict[str, Any]:
     out: Dict[str, Any] = {"round": i}
     log("=" * 60)
     log("第 {0}/{1} 轮".format(i, total))
@@ -145,7 +220,7 @@ def _one_round(i: int, total: int, task: str, target: Path, cfg: Dict[str, Any],
         "假设者", prompt, target, cfg, run_dir, ledger, i,
         model=cfg["model"], mode=MODE_READONLY, schema_name="hypotheses",
         timeout=cfg["readonly_timeout_sec"], readonly=True,
-        dry_run=dry_run, log=log)
+        dry_run=dry_run, resume=resume, log=log)
     if dry_run:
         out["challenge"] = _step(
             "质疑者", challenger.build_prompt(task, target, cfg, {}, history),
@@ -172,7 +247,7 @@ def _one_round(i: int, total: int, task: str, target: Path, cfg: Dict[str, Any],
         "质疑者", prompt, target, cfg, run_dir, ledger, i,
         model=cfg["model"], mode=MODE_READONLY, schema_name="critique",
         timeout=cfg["readonly_timeout_sec"], readonly=True,
-        dry_run=False, log=log)
+        dry_run=False, resume=resume, log=log)
     crits = out["challenge"].get("critiques") or []
     rejected = sum(1 for c in crits if c.get("verdict") == "reject")
     revised = sum(1 for c in crits if c.get("verdict") == "revise")
@@ -187,7 +262,7 @@ def _one_round(i: int, total: int, task: str, target: Path, cfg: Dict[str, Any],
         "验证者", prompt, target, cfg, run_dir, ledger, i,
         model=cfg["verifier_model"], mode=MODE_WRITE, schema_name="verification",
         timeout=cfg["verifier_timeout_sec"], readonly=False,
-        dry_run=False, log=log)
+        dry_run=False, resume=resume, log=log)
     ev = out["verify"].get("evidence") or []
     tally = {k: sum(1 for e in ev if e.get("verdict") == k)
              for k in ("supported", "refuted", "inconclusive")}
@@ -199,8 +274,16 @@ def _one_round(i: int, total: int, task: str, target: Path, cfg: Dict[str, Any],
 def _step(role: str, prompt: str, target: Path, cfg: Dict[str, Any],
           run_dir: Path, ledger: Ledger, round_no: int, *, model: str, mode: str,
           schema_name: str, timeout: int, readonly: bool, dry_run: bool,
-          log: Callable[[str], None]) -> Dict[str, Any]:
+          log: Callable[[str], None], resume: bool = False) -> Dict[str, Any]:
     stem = "round{0}-{1}".format(round_no, schema_name)
+    cached = run_dir / (stem + ".json")
+    if resume and cached.exists():
+        try:
+            data = json.loads(cached.read_text(encoding="utf-8"))
+            log("  {0} 复用上次的产出（{1}）".format(role, cached.name))
+            return data
+        except (OSError, ValueError):
+            log("  {0} 上次的产出读不出来，重跑".format(role))
     (run_dir / (stem + ".prompt.md")).write_text(prompt, encoding="utf-8")
 
     if dry_run:
@@ -220,7 +303,19 @@ def _step(role: str, prompt: str, target: Path, cfg: Dict[str, Any],
     report.dump_json(run_dir / (stem + ".raw.json"), dict(call))
 
     if not call.ok or call.data is None:
-        raise LoopError(_role_failed(role, call))
+        # 超时/出错不等于白干。agy 到点就丢弃 agent 已完成的工作，但那段会话还在，
+        # 接上去只把结果要回来 —— 实测能从一次跑满 45 分钟的超时里捞回完整结论。
+        log("    这一步没拿到结果（{0}），试着续接会话把已做的工作要回来…".format(
+            call.get("status")))
+        rescued = salvage(call, cwd=target, model=model, mode=mode,
+                          schema_path=config.schema(schema_name),
+                          timeout_sec=SALVAGE_TIMEOUT_SEC)
+        if rescued is None:
+            raise LoopError(_role_failed(role, call))
+        ledger.add(role + "(续接)", round_no, rescued)
+        report.dump_json(run_dir / (stem + ".salvage.json"), dict(rescued))
+        log("    捞回来了，多花 {0:,} tokens".format(rescued.total_tokens))
+        call = rescued
     log("    用时 {0:.0f}s，{1:,} tokens".format(time.time() - t0,
                                                  call.total_tokens))
     report.dump_json(run_dir / (stem + ".json"), call.data)
@@ -229,14 +324,30 @@ def _step(role: str, prompt: str, target: Path, cfg: Dict[str, Any],
 
 def _commit_round(target: Path, i: int, task: str,
                   log: Callable[[str], None]) -> None:
-    code, out = run_git(target, "status", "--porcelain")
-    if code != 0 or not out.strip():
+    """只提交源码改动。取证残渣挑出来、留在磁盘上、大声报出来，不塞进历史。"""
+    paths = _changed_paths(target)
+    if not paths:
         log("  （这一轮没有改动，不提交）")
         return
-    run_git(target, "add", "-A")
+    junk = [p for p in paths if _is_junk(p)]
+    good = [p for p in paths if not _is_junk(p)]
+
+    if junk:
+        log("  !! 验证者在仓库里留下了取证残渣，**这些没有被提交**，还在磁盘上：")
+        for p in junk[:20]:
+            log("       " + p)
+        if len(junk) > 20:
+            log("       …另有 {0} 个".format(len(junk) - 20))
+        log("     （自己看一眼要不要删。取证工具不该留在目标仓库里。）")
+
+    if not good:
+        log("  这一轮除了残渣没有源码改动，不提交")
+        return
+
+    run_git(target, "add", "--", *good)
     msg = "hypoloop 第 {0} 轮：{1}".format(i, task)
     code, out = run_git(target, "commit", "-m", msg)
     if code != 0:
         log("  提交失败：{0}".format(out.strip()[:400]))
     else:
-        log("  已提交第 {0} 轮的改动".format(i))
+        log("  已提交第 {0} 轮的 {1} 个文件".format(i, len(good)))

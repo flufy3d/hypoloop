@@ -16,7 +16,7 @@ from pathlib import Path
 from . import __version__, config
 from .agy import AgyNotFound
 from .ledger import history
-from .loop import LoopError, run
+from .loop import LoopError, load_manifest, run
 from .quota import format_quota, probe
 
 EPILOG = """\
@@ -24,6 +24,7 @@ EPILOG = """\
   cd E:/Projects/my-game
   hypoloop "让游戏画面更好更精致一些" --rounds 2 --commit
   hypoloop "找出并修掉首屏白屏的根因" --evidence-hint "用无头浏览器截图对比首屏"
+  hypoloop --resume ~/.hypoloop/runs/20260903-174503-xxx -   # 验证者超时后续跑
   hypoloop quota
 
 三个角色：假设者提出可证伪的假设 → 质疑者攻击它们 → 验证者动手实测。
@@ -51,7 +52,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="假设者 / 质疑者 / 验证者 —— 三角色实证循环，跑在 agy 上。",
         epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("task", nargs="?", help="要交给这套系统的任务，一句话说清就行")
+    p.add_argument("task", nargs="?",
+                   help="要交给这套系统的任务，一句话说清就行。"
+                        "配合 --resume 时可以写 - ，表示沿用上次的任务描述。")
     p.add_argument("-C", "--target", default=".", help="目标项目目录（默认当前目录）")
     p.add_argument("--rounds", type=int, help="跑几轮（默认 2）")
     p.add_argument("--hypotheses", type=int, help="每轮提几条假设（默认 3）")
@@ -64,6 +67,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="每轮改动提交到 hypoloop/<run> 分支，方便 diff 和整体回退")
     p.add_argument("--allow-dirty", action="store_true",
                    help="目标不是 git 仓库、或工作区不干净时也硬跑")
+    p.add_argument("--resume", metavar="RUN_DIR",
+                   help="续跑一个已有的运行目录：已经产出过的步骤直接复用，只补跑"
+                        "缺的那些。验证者超时后不用把前两个角色重跑一遍。")
     p.add_argument("--dry-run", action="store_true",
                    help="只打印将要发出去的提示词，一个 token 都不花")
     p.add_argument("--save-config", action="store_true",
@@ -110,6 +116,12 @@ def main(argv=None) -> int:
         build_parser().print_help()
         return 2
 
+    resume_dir = Path(args.resume).resolve() if args.resume else None
+    manifest = load_manifest(resume_dir) if resume_dir else {}
+    if manifest.get("target") and args.target == ".":
+        args.target = manifest["target"]
+    task = args.task if args.task != "-" else manifest.get("task", args.task)
+
     target = Path(args.target).resolve()
     overrides = {
         "rounds": args.rounds,
@@ -125,8 +137,8 @@ def main(argv=None) -> int:
         print("这个项目的默认配置已存到 {0}".format(path))
 
     try:
-        run(args.task, target, cfg, dry_run=args.dry_run, commit=args.commit,
-            allow_dirty=args.allow_dirty)
+        run(task, target, cfg, dry_run=args.dry_run, commit=args.commit,
+            allow_dirty=args.allow_dirty, resume_dir=resume_dir)
     except AgyNotFound as e:
         print("找不到 agy：{0}".format(e), file=sys.stderr)
         return 3
