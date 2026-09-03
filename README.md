@@ -98,12 +98,12 @@ hypoloop history                         # 看历史 token 账
 | `--rounds N` | 跑几轮（默认 2） |
 | `--hypotheses N` | 每轮提几条假设（默认 3） |
 | `--model` / `--verifier-model` | 分别指定只读角色和验证者的模型 |
-| `--evidence-hint` | 给验证者的取证建议；不填它自己看着办 |
+| `--evidence-hint` | 给验证者的取证建议；**默认空，通常就该空着**（见下） |
 | `--commit` | 每轮改动单独提交，方便 diff 和整体回退 |
 | `--allow-dirty` | 目标不是 git 仓库、或工作区不干净时也硬跑 |
 | `--save-config` | 把本次参数存成这个项目的默认值 |
 
-## 四件它认真对待的事
+## 五件它认真对待的事
 
 ### 1. 「只有验证者能改文件」是**机制**，不是提示词里的一句请求
 
@@ -159,6 +159,35 @@ v1internal:retrieveUserQuotaSummary
 
 **它随时可能失效**（`-v=3` 是未公开标志）。失效时 hypoloop 会如实说"读不到"并把原因
 打出来，**绝不编一个数字**，也绝不因此让任务跑不下去。
+
+### 5. 环境事实自动探测，**任务结论一个字都不许预先喂**
+
+`--evidence-hint` 很容易被用错。一开始它像是个方便的地方，可以把"我知道的事"都倒进去。
+但倒着倒着就会倒进这种东西：
+
+> "这个项目的分级是靠吃道具升的，不是靠里程 —— 里程这条轴是空的。"
+
+这句话是**假设者的活**。一旦预先喂进去，这一轮就再也不能说明"系统能自己发现问题"了 ——
+它只是把你写的答案抄了一遍。这个坑是实际踩过的。
+
+所以现在划三层：
+
+| 层 | 谁产出 | 举例 |
+|---|---|---|
+| **环境事实**（机器的属性） | `environ.py` 自动探测并注入验证者 | "agy 自带的 browser 工具在这台机器上装不上驱动" |
+| **取证提示**（人的可选叮嘱） | `--evidence-hint`，**默认空** | "这个服务得先起 docker-compose" |
+| **任务结论**（该改什么） | **只能**由三个角色自己得出 | —— |
+
+`environ.py` 只报**这台机器上真的观测到的**东西：翻 agy 自己的日志确认内置 browser
+工具是不是真的失败过、`ms-playwright` 缓存在不在、有没有 node/npm/git。不联网、不花额度、
+不猜；探测不到就什么都不说。有一个测试专门盯着这段自动注入的文本里不许出现任何项目相关的
+内容。
+
+（顺带记一下那个 browser 工具的坑：agy 把 playwright-go 钉在了 driver 1.57.0，而微软已经
+不在 `/builds/driver/` 托管 driver zip 了，新旧 CDN 全 404，Linux 上一样 —— 上游
+[#638](https://github.com/google-antigravity/antigravity-cli/issues/638) /
+[#629](https://github.com/google-antigravity/antigravity-cli/issues/629)。坏的只是 agy
+内置的那个 Go 驱动，npm 上的 playwright 包是另一套东西，正常可用。）
 
 ## 产物落在哪
 

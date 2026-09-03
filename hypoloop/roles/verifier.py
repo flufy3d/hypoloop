@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List
 
+from .. import environ
 from ._shared import as_json, history_briefing, project_tree
 
 NAME = "验证者"
@@ -50,6 +51,9 @@ def build_prompt(task: str, root: Path, cfg: Dict[str, Any],
         "node_modules、截图、日志、脚本之类的残渣。",
         "  - 装东西前先看看有没有现成的；能用标准库/系统自带的就别装。",
     ]
+    env = environ.block()
+    if env:
+        blocks += ["", env]
     if hint:
         blocks += ["", "【调用方给的取证提示】\n" + hint +
                    "\n（这是建议不是命令 —— 你有更好的办法就用你的，但要在 method "
