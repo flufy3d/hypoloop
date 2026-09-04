@@ -1,410 +1,317 @@
 # hypoloop
 
-三个角色，一个循环，跑在**你本机装着的 CLI agent** 上：
+Three roles, one loop, running on **whichever CLI agent you already have installed**.
 
-| 角色 | 干什么 | 能改文件吗 |
+| Role | Job | Can edit files? |
 |---|---|---|
-| **假设者** | 读代码，对任务提出**可证伪**的假设 | ❌ |
-| **质疑者** | 攻击这些假设，给修正案或全新假设 | ❌ |
-| **验证者** | 动手改、自己搭取证手段、把结论推向被实证的方向 | ✅ **只有他** |
+| **Hypothesizer** | Reads the code, proposes **falsifiable** hypotheses | ❌ |
+| **Challenger** | Attacks them — counterexamples, corrections, rival hypotheses | ❌ |
+| **Verifier** | Edits, builds its own evidence, pushes claims toward *proven* | ✅ **only this one** |
 
-一轮走完，下一轮把**上一轮的证据和裁决**喂回去 —— 所以这个循环是收敛的，不是三个
-agent 各说各话。
+Each round feeds the previous round's **evidence and verdicts** back in, so the loop
+converges instead of three agents talking past each other.
 
-hypoloop 自己不调模型。它调 [agy](https://antigravity.google)（Antigravity CLI，
-Gemini）、[codex](https://developers.openai.com/codex/cli)（OpenAI Codex CLI）或
-[claude](https://claude.com/claude-code)（Claude Code CLI）—— **装了哪家用哪家，
-一家都不强制依赖**，也可以同一个任务换一家再跑一遍。
+hypoloop doesn't call models itself. It drives
+[agy](https://antigravity.google) (Antigravity CLI, Gemini),
+[codex](https://developers.openai.com/codex/cli) (OpenAI Codex CLI), or
+[claude](https://claude.com/claude-code) (Claude Code CLI) — **whichever you have;
+none is required**. You can also run the same task twice on different backends.
 
 ```
-$ cd E:/Projects/neon-racer
-$ hypoloop "让游戏画面更好更精致一些" --rounds 2 --commit
+$ cd my-project
+$ hypoloop "make the visuals crisper" --rounds 2 --commit
 
-运行目录：~/.hypoloop/runs/20260903-174503-让游戏画面更好更精致一些
-目标项目：E:\Projects\neon-racer
-后端：agy（Antigravity CLI（Gemini））　假设者/质疑者 gemini-3.8-flash-medium　验证者 gemini-3.8-flash-high
+Backend: agy (Antigravity CLI)  hypothesizer/challenger gemini-3.8-flash-medium  verifier gemini-3.8-flash-high
+Quota before: 5h window 92.149% left · weekly 98.692% left
 
-开跑前额度（Gemini Models，档位 Google AI Pro (g1-pro-tier)）：
-  5 小时窗口  剩余 92.149%   重置于 2026-09-03 22:08
-  周窗口      剩余 98.692%   重置于 2026-09-10 17:08
+=== Round 1/2 ===
+  hypothesizer (read-only)  125s, 190,898 tokens  → 3 hypotheses
+  challenger   (read-only)  208s, 254,372 tokens  → 3 critiques (0 rejected, 2 revise), 1 new hypothesis
+  verifier     (write)      549s, 655,129 tokens  → 1 supported, 3 refuted; 1 file changed
+=== Round 2/2 ===
+  ...                                             → 3 supported, 0 refuted; 3 files changed
 
-============================================================
-第 1/2 轮
-============================================================
-  假设者 跑起来了（gemini-3.8-flash-medium，只读）…
-    用时 125s，190,898 tokens
-  → 提了 3 条假设
-  质疑者 跑起来了（gemini-3.8-flash-medium，只读）…
-    用时 208s，254,372 tokens
-  → 3 条意见（驳回 0、要求修正 2），另提 1 条新假设
-  验证者 跑起来了（gemini-3.8-flash-high，可写）…
-    用时 549s，655,129 tokens
-  → 实证 1、证伪 3、未决 0；改了 1 个文件
-============================================================
-第 2/2 轮
-============================================================
-  ...
-  → 实证 3、证伪 0、未决 0；改了 3 个文件
+Committed 3 files (one commit for the whole run).
 
-已提交 3 个文件（整个 run 一个提交）。
-
-跑完后额度（Gemini Models，档位 Google AI Pro (g1-pro-tier)）：
-  5 小时窗口  剩余 76.936%   重置于 2026-09-03 22:08
-  周窗口      剩余 96.156%   重置于 2026-09-10 17:08
-  本次吃掉 5 小时窗口 的 15.213 个百分点
-  本次吃掉 周窗口 的 2.536 个百分点
-
-本次 token 消耗（来自后端每次调用返回的 usage）：
-  角色           调用数  total_tokens
-  验证者              2     1,285,923
-  假设者              1       194,133
-  质疑者              1       158,625
-  合计               4     1,638,681
-
-报告：~/.hypoloop/runs/20260903-174503-让游戏画面更好更精致一些/report.md
+Quota after: 5h 76.936% · weekly 96.156%   (this run: −15.213pp / −2.536pp)
+Tokens: verifier 1,285,923 · hypothesizer 194,133 · challenger 158,625 — total 1,638,681
 ```
 
-上面是一次**真实运行**的输出（neon-racer，一个 Three.js 网页游戏），不是编出来的示例。
+That's a real run on a Three.js web game, not a mockup. In round 1 the hypothesizer
+proposed "raise bloom threshold 0.25 → 0.80 to kill the grey haze." The challenger
+computed why that's fatal: `LuminosityHighPassShader` uses BT.601 weights, so cyan
+`0x00ffff` has luma 0.701 and magenta `0xff00ff` only 0.413 — 0.80 would **decapitate
+every neon in the game**. The verifier confirmed the rebuttal by measurement: in-game
+cyan glow pixels collapsed 34728 → 19310 (−44.4%) while sky luminance didn't move
+(18.83 → 18.79). **Refuted and reverted — not one line survived.**
 
-那一轮里，假设者提的第一条「把 bloom threshold 从 0.25 抬到 0.80 就能去掉全屏灰雾」
-被质疑者算出了致命问题：LuminosityHighPassShader 用 BT.601 权重算亮度，青色 0x00ffff
-的 luma 只有 0.701、品红 0xff00ff 只有 0.413 —— 抬到 0.80 会把游戏**全部霓虹一起斩掉**。
-验证者实测确认了这个反驳：局内青色发光像素从 34728 暴跌到 19310（−44.4%），而天空亮度
-纹丝不动（18.83 → 18.79）。**这条被证伪并回滚了，一行都没留在代码里。**
+Same round, "EffectComposer lacks MSAA so `antialias:true` does nothing" was kept:
+`renderTarget.samples` 0 → 4, Laplacian edge-noise variance on the track wireframe
+352.71 → 244.30. Re-measured later with a completely independent harness on different
+frames and regions: −42.3%. Same direction, same magnitude.
 
-同一轮里「EffectComposer 缺 MSAA 让 antialias:true 失效」那条被实证保留：
-`renderTarget.samples` 0 → 4，赛道线框的拉普拉斯边缘噪声方差从 352.71 降到 244.30。
-事后用完全独立的一套 harness 复测，在不同区域、不同帧上量到 −42.3%，方向和量级都对得上。
+**That's the whole point**: three of four hypotheses were wrong, and none of the wrong
+ones made it into the code.
 
-**这就是这套东西存在的理由**：四条假设里三条是错的，而错的那三条没有留在代码里。
+## Install
 
-## 装
-
-零第三方依赖，只用 Python 标准库（3.8+）。
+Zero third-party dependencies — Python standard library only (3.8+).
 
 ```bash
 pip install git+https://github.com/flufy3d/hypoloop
 ```
 
-然后至少装一家 CLI agent 并登录过。装了哪几家自己看：
+Then install at least one CLI agent and log into it:
 
 ```
 $ hypoloop backends
-名字      是什么                       装了没       默认模型
-agy*    Antigravity CLI（Gemini）   是         gemini-3.8-flash-medium / gemini-3.8-flash-high
-codex   OpenAI Codex CLI          是         gpt-5.6-terra:medium / gpt-5.6-terra:high
-claude  Claude Code CLI           是         sonnet / opus
-
-带 * 的是不指定 --backend 时会用的那家。
+name    what it is                  installed  default models
+agy*    Antigravity CLI (Gemini)    yes        gemini-3.8-flash-medium / gemini-3.8-flash-high
+codex   OpenAI Codex CLI            yes        gpt-5.6-terra:medium / gpt-5.6-terra:high
+claude  Claude Code CLI             yes        sonnet / opus
 ```
 
-找不到可执行文件时，各自设一个环境变量指过去就行：`HYPOLOOP_AGY` /
-`HYPOLOOP_CODEX` / `HYPOLOOP_CLAUDE`。（agy 装完默认不在 PATH 上，跑一次
-`agy install` 就好。）
+If the binary isn't found, point at it with `HYPOLOOP_AGY` / `HYPOLOOP_CODEX` /
+`HYPOLOOP_CLAUDE`. (agy isn't on PATH after install — run `agy install` once.)
 
-## 用
+## Use
 
 ```bash
-hypoloop "任务描述"                      # 在目标项目目录里跑，默认 2 轮
-hypoloop "任务" -C /path/to/project      # 或者指定目录
-hypoloop "任务" --backend codex          # 换一家跑
-hypoloop "任务" --rounds 3 --commit      # 收一个提交到 hypoloop/<run> 分支
-hypoloop "任务" --dry-run                # 只打印将要发的提示词，一个 token 不花
-hypoloop "任务" --evidence-hint "用无头浏览器截图对比首屏"
-hypoloop "任务" --rounds 5 --until "必死率为 0 且难度常数未改动"   # 达成就收工
-hypoloop backends                        # 本机装了哪几家
-hypoloop quota                           # 装了的几家的额度一起报
-hypoloop history                         # 看历史 token 账
+hypoloop "task description"              # run in the target project dir, 2 rounds
+hypoloop "task" -C /path/to/project
+hypoloop "task" --backend codex          # run it on a different CLI
+hypoloop "task" --rounds 3 --commit      # one commit on a hypoloop/<run> branch
+hypoloop "task" --dry-run                # print the prompts, spend nothing
+hypoloop "task" --rounds 5 --until "zero unavoidable deaths, difficulty constants untouched"
+hypoloop backends / quota / history
 ```
 
-常用开关：
-
-| 开关 | 作用 |
+| Flag | What it does |
 |---|---|
-| `--backend {agy,codex,claude}` | 用哪家跑。**不指定就用装了的第一家，并在开跑时说清楚用的是谁** |
-| `--rounds N` | 跑几轮（默认 2） |
-| `--hypotheses N` | 每轮提几条假设（默认 3） |
-| `--model` / `--verifier-model` | 分别指定只读角色和验证者的模型；不给就用该后端自己的中档/高档 |
-| `--evidence-hint` | 给验证者的取证建议；**默认空，通常就该空着**（见下） |
-| `--until "<条件>"` | 结束条件。达成了就跳过剩下的轮次（见下） |
-| `--commit` | 整个 run 的改动**收成一个提交**，放在 `hypoloop/<run>` 分支上 |
-| `--allow-dirty` | 目标不是 git 仓库、或工作区不干净时也硬跑 |
-| `--save-config` | 把本次参数存成这个项目的默认值（模型按后端分开存） |
+| `--backend {agy,codex,claude}` | Which CLI to use. **Defaults to the first one installed, and says so at startup** |
+| `--rounds N` / `--hypotheses N` | Rounds (default 2) / hypotheses per round (default 3) |
+| `--model` / `--verifier-model` | Override per role; empty means the backend's own mid/high tier |
+| `--evidence-hint` | Advice for the verifier. **Empty by default, and usually should stay empty** (see below) |
+| `--until "<condition>"` | Stop early once met (see below) |
+| `--commit` | Whole run collapses into **one** commit on a `hypoloop/<run>` branch |
+| `--allow-dirty` | Run even if the target isn't a clean git repo |
+| `--save-config` | Save these settings as the project default (models stored per backend) |
 
-## 九件它认真对待的事
+## Design notes
 
-### 1. 「只有验证者能改文件」是**机制**，不是提示词里的一句请求
+### 1. "Only the verifier writes" is a mechanism, not a prompt request
 
-提示词里写「你不许改文件」，模型哪天不听就破了，而且破了没人知道。所以：
+A prompt saying "don't edit files" breaks the day the model ignores it — silently.
+So: read-only roles run in each CLI's own read-only mode (agy `--mode plan`, codex
+`-s read-only`, claude `--permission-mode plan`), **and** `guard.py` fingerprints the
+worktree before and after each read-only step and aborts the round on any mismatch.
 
-- 假设者和质疑者跑在各家自己的只读档（agy `--mode plan`、codex `-s read-only`、
-  claude `--permission-mode plan`）；
-- **更重要的是**，`guard.py` 在它们跑之前给工作区拍一次指纹，跑完再拍一次，不一致
-  就中止整轮并打印出到底改了什么。
+The second layer matters more with multiple backends: **when you add a new one, nobody
+knows how airtight its read-only mode really is.** The fingerprint is ours and holds
+for all of them. (Salvage calls are inside the fingerprint too — otherwise a read-only
+role's resume would be the one unwatched write path in the system.)
 
-第二道是兜底，而且是可执行的。这一条在多后端下更重要：**新接一家后端时，谁也不知道
-那家的只读到底有多硬。** 指纹是我们自己的，对谁都一样成立。
+The fingerprint covers *content*, not just filenames: `git status --porcelain` only
+lists untracked paths, so untracked file contents are hashed separately.
 
-指纹覆盖内容而不只是文件名 —— `git status --porcelain` 只列未跟踪文件的路径，
-内容被改了它一个字都不会变，所以未跟踪文件的内容单独哈希。
+### 2. Falsifiability is forced by the schema
 
-（抢救调用也在指纹里面。漏掉的话，只读角色的续接就成了整套系统里唯一一个没人看着的
-写入口。）
+Every hypothesis **must** carry `predicted_observable`: if this is true, which
+measurable quantity moves, and how. "It'll look nicer" is not an answer. The verifier
+returns `supported` / `refuted` / `inconclusive` per hypothesis with **concrete
+before/after readings**, and reverts anything it refuted.
 
-### 2. 「往被实证的方向走」靠 schema 逼出来
+`inconclusive` is a first-class outcome — "couldn't measure it" beats inventing a number.
 
-每条假设**必须**带 `predicted_observable`：如果这条成立，哪个可测量的量会怎么变。
-写「画面会更好看」这种没法测的，等于没写。验证者对每条给出
-`supported` / `refuted` / `inconclusive` 和**具体的前后读数**，被证伪的改动自己回滚。
+**How to gather evidence is the verifier's problem.** It has a full shell: run existing
+tests, write a throwaway script, start a local server, install a headless browser. The
+only boundary is that tooling and temp artifacts must not be left in the target repo.
 
-`inconclusive` 是个一等公民 —— 测不出来就说测不出来，比编一个没测过的读数强得多。
+### 3. Backends are pluggable — adding one is two steps
 
-**怎么取证是验证者自己的事。** 它有完整的 shell：跑现成的测试、写个一次性脚本、
-起本地服务、装个无头浏览器截图对比 …… 都行。hypoloop 不替它做主，也就不用背它的
-依赖。唯一的边界是：取证用的工具和临时产物不许留在目标仓库里。
+The contract lives in `backends/base.py` and asks for four things:
 
-### 3. 后端是可插拔的，加一家只有两步
+1. Run a prompt non-interactively with the prompt **on stdin** (not argv — Windows caps
+   a command line at 32767 chars, and a prompt carrying code context will eventually
+   blow up on some large project with an "argument too long" error that points nowhere
+   near the real cause)
+2. **Structured output** against a supplied JSON Schema
+3. A **read-only mode**
+4. Per-call usage, ideally remaining quota too
 
-`hypoloop/backends/` 下一个模块一家。契约在 `backends/base.py`，就四件事：
-
-1. 非交互跑一段提示词，**提示词走 stdin**（不走 argv —— Windows 命令行总长上限
-   32767 字符，带着代码上下文的提示词迟早在某个大项目上炸，而炸出来的「参数过长」
-   跟提示词毫无关系，极难定位）
-2. 能按给定的 JSON Schema 吐**结构化输出**
-3. 有**只读模式**
-4. 能报本次用量，最好还能报剩余额度
-
-加一家（opencode、aider、随便什么）：写个 `Backend` 子类，在
-`backends/__init__.py` 的 `_MODULES` 里加一行。**循环、角色提示词、guard、账本、
-报告一个字都不用改。**
-
-三家现在是这么映射的：
+To add one (opencode, aider, whatever): write a `Backend` subclass, add a line to
+`_MODULES` in `backends/__init__.py`. **The loop, role prompts, guard, ledger and
+report don't change at all.**
 
 | | agy | codex | claude |
 |---|---|---|---|
-| 提示词 | stdin | `exec … -` | stdin |
-| 结构化输出 | `--json-schema <文件>` → `structured_output` | `--output-schema <文件>` + `-o` 收最后一条消息 | `--json-schema '<JSON 字面量>'` → `structured_output` |
-| 只读 | `--mode plan` | `-s read-only`（**操作系统级沙箱**） | `--permission-mode plan` |
-| 可写 | `--mode accept-edits` | `-s workspace-write` + 开网络 | `--permission-mode acceptEdits` |
-| 续接 | `--conversation <id>` | `exec resume <thread_id>` | `--resume <session_id>` |
-| 强弱两档 | flash-medium / flash-high | 同模型的 `model_reasoning_effort`，写成 `模型:档位` | sonnet / opus |
+| Structured output | `--json-schema <file>` → `structured_output` | `--output-schema <file>` + `-o` last message | `--json-schema '<JSON literal>'` → `structured_output` |
+| Read-only | `--mode plan` | `-s read-only` (**OS-level sandbox**) | `--permission-mode plan` |
+| Write | `--mode accept-edits` | `-s workspace-write` + network on | `--permission-mode acceptEdits` |
+| Resume | `--conversation <id>` | `exec resume <thread_id>` | `--resume <session_id>` |
+| Two tiers | flash-medium / flash-high | same model, `model_reasoning_effort`, written `model:effort` | sonnet / opus |
 
-### 4. 每家都有会**静默出错**的坑，都踩过了
-
-改后端代码之前先读一遍这张表。每一条都是实测撞出来的，不是从文档里抄的。
+### 4. Every CLI has a way to fail *silently*. All of these were hit for real
 
 **agy**
 
-| 坑 | 症状 | 怎么办 |
+| Trap | Symptom | Fix |
 |---|---|---|
-| **不认子进程的 cwd** | 不给 `--add-dir`，agent 在 `~/.gemini/antigravity-cli/scratch` 里干活。**全程 `status=SUCCESS`**：你让它建文件，它回报「已创建」，路径在 scratch 底下；你让它读代码，它看到一个空目录。 | 每次调用都带 `--add-dir <目标目录>` |
-| **headless 下权限一律自动拒绝** | 「a tool required the "read_file" permission that headless mode cannot prompt for, so it was auto-denied」——只读角色连代码都读不了，直接交白卷 | 所有角色都给 `--dangerously-skip-permissions`；只读靠 `--mode plan` + 指纹管，不是靠扣这个标志 |
-| **`--disable-slash-commands` 顺手废掉 `--mode`** | agy 只警告一句「--mode plan has no effect while slash command expansion is disabled」，然后只读角色**悄悄变成了可写角色** | 别用这个标志 |
+| Ignores the child process cwd | Without `--add-dir` the agent works inside `~/.gemini/antigravity-cli/scratch`, **reporting `status=SUCCESS` the whole way**: "file created" — under scratch; "read the code" — it saw an empty directory | Always pass `--add-dir <target>` |
+| Headless auto-denies permissions | *"a tool required the read_file permission that headless mode cannot prompt for, so it was auto-denied"* — the read-only roles can't even read | Give every role `--dangerously-skip-permissions`; read-only is enforced by `--mode plan` + the fingerprint, not by withholding this flag |
+| `--disable-slash-commands` silently voids `--mode` | agy warns once, then the read-only role **quietly becomes a writing role** | Don't use that flag |
 
 **codex**
 
-| 坑 | 症状 | 怎么办 |
+| Trap | Symptom | Fix |
 |---|---|---|
-| **走 OpenAI strict schema** | 每个对象都得 `additionalProperties: false`、每个字段都得进 `required`，否则 HTTP 400 `invalid_json_schema`，一个 token 没花就整步失败 | `codex.strictify()` 把 schema **机械改写**成严格版落到临时文件。**不改原 schema** —— 那等于让一家后端的序列化限制反过来改写整套系统的语义（见第 9 条，`goal` 的可选是有意义的） |
-| **退出码会盖住真正的原因** | 上游 400 在事件流里说得清清楚楚，可如果先按「退出码非 0」写死错误信息，人看到的是一句跟原因毫无关系的「codex 退出码 1」 | 先读事件流里的 `error`/`turn.failed`，**再**退回退出码；而且把嵌套 JSON 里最里层那句人话挖出来 |
-| **没有 `--print-timeout`** | 我们超时就得杀进程，`capture_output` 那条路上什么都拿不到 —— **连 `thread_id` 都没有**，于是抢救功能直接失效 | stdout 落盘再解析。杀掉之后照样能从已写出的事件里抠到 `thread_id` 和那条可能已经完整的结构化消息 |
-| **`exec resume` 不收 `-s` / `-C`** | 沙箱档位和工作目录从原会话继承。照着新开调用的样子拼参数，抢救**当场失败**，而报出来的「to pass '-s' as a value, use '-- -s'」跟真正的原因毫无关系 | 续接时只带它收的那几个。**这条是实跑一次「记住一个词 → 续接问它」的往返测出来的** —— agy 和 claude 都通，唯独 codex 这条静默地废着，光看 argv 前三项根本发现不了 |
-| **不给 total_tokens** | 得自己加。`cached_input_tokens` 是 `input_tokens` 的**子集**，三个一起加会把账算大 | `total = input + output` |
+| OpenAI strict schemas | Every object needs `additionalProperties: false` and every field in `required`, else HTTP 400 `invalid_json_schema` — the step dies without spending a token | `strictify()` mechanically rewrites the schema to a strict copy in a temp file. **The originals are untouched** — one backend's serialization limits must not rewrite the system's semantics (see §7 on why `goal` is optional) |
+| Exit code masks the real cause | The upstream 400 is spelled out in the event stream, but hardcoding "exit code 1" first shows a message with no relation to the actual problem | Read `error`/`turn.failed` from the event stream **first**, fall back to the exit code; and dig the innermost human-readable `message` out of the nested JSON |
+| No `--print-timeout` | On timeout we must kill the process, and `capture_output` then yields nothing — **not even `thread_id`**, so salvage is dead | Stream stdout to disk and parse that. After the kill you can still recover `thread_id` and any already-complete structured message |
+| `exec resume` rejects `-s` / `-C` | Sandbox and cwd are inherited from the original session. Passing them fails immediately, with "to pass '-s' as a value, use '-- -s'" — unrelated to the real cause | Only send the flags it accepts. **Found by actually running a "remember this word → resume and ask for it" round trip**: agy and claude passed, codex was silently broken. Checking the first three argv entries would never have caught it |
+| No `total_tokens` | You add it yourself, and `cached_input_tokens` is a **subset** of `input_tokens` — summing all three inflates the bill | `total = input + output` |
 
 **claude**
 
-| 坑 | 症状 | 怎么办 |
+| Trap | Symptom | Fix |
 |---|---|---|
-| **`--json-schema` 要字面量不要路径** | 给文件路径直接报「--json-schema is not valid JSON」。这个错很容易被当成 schema 写错了，其实是参数形态不对 | 读文件内容再传 |
-| **`--dangerously-skip-permissions` 会拆掉 plan 模式** | 它就是 bypassPermissions | 只读角色**不加**这个标志。claude 没有 agy 那个「headless 下读工具被自动拒绝」的毛病，plan 模式下读工具本来就放行 |
-| **cache_read 混进总量会让账失真** | 它是另一个计费档（约为新输入的十分之一），长会话里压倒性地大 | 不计入 `total_tokens`，单列一栏 |
+| `--json-schema` wants a literal, not a path | A path gives "--json-schema is not valid JSON", which reads like a broken schema but is a wrong argument shape | Read the file, pass the contents |
+| `--dangerously-skip-permissions` tears down plan mode | It *is* bypassPermissions | Read-only roles don't get it. claude has no "headless auto-denies reads" problem, so plan mode already allows reads |
+| cache_read distorts the bill | It's a separate pricing tier (~1/10 of fresh input) and dwarfs everything in long sessions | Excluded from `total_tokens`, reported in its own column |
 
-### 5. 额度是**真额度**，不是本地估算 —— 而且三条路都不烧额度
+### 5. Quota is the **real** number — and all three probes are free
 
-三家的口子完全不同，所以没有统一抽象，只有统一的读数类型（`quota.py`）：
+Three completely different mechanisms, so there's no shared abstraction — only a shared
+reading type (`quota.py`):
 
-| | 怎么拿的 | 烧额度吗 | 稳不稳 |
+| | How | Costs quota? | Sturdiness |
 |---|---|---|---|
-| **agy** | `agy -v=3 models` 把 HTTP 响应体打进 `~/.gemini/antigravity-cli/log/cli-*.log`，再读出 `v1internal:retrieveUserQuotaSummary` | 否（只列模型，不生成内容） | `-v=3` 是**未公开**的 glog 标志，随时可能失效 |
-| **codex** | `codex app-server` 的 `account/rateLimits/read` | 否（只读账户状态） | 协议里的**正式方法**（`codex app-server generate-json-schema` 能导出整份协议），比 agy 那条稳 |
-| **claude** | `GET /api/oauth/usage`，凭据蹭 Claude Code 自己维护的 `~/.claude/.credentials.json` | 否 | 跟在 claude 里敲 `/usage` 看到的是同一个数 |
+| **agy** | `agy -v=3 models` dumps HTTP bodies into `~/.gemini/antigravity-cli/log/cli-*.log`; read `v1internal:retrieveUserQuotaSummary` | No (lists models, generates nothing) | `-v=3` is an **undocumented** glog flag and can vanish |
+| **codex** | `account/rateLimits/read` on `codex app-server` | No (reads account state) | An **official** protocol method (`codex app-server generate-json-schema` exports the whole protocol) — sturdier than agy's path |
+| **claude** | `GET /api/oauth/usage`, borrowing the token Claude Code already maintains | No | Same number you see typing `/usage` in claude |
 
-口径统一成「还剩百分之几」：agy 原生给 `remainingFraction`，codex 和 claude 给
-`used_percent`，在各自后端里换算完再进来。这样「这次吃掉多少」对三家都成立。
+Everything is normalized to "percent remaining": agy natively reports
+`remainingFraction`, codex and claude report `used_percent`, converted in their own
+backends. That makes "this run cost X" work identically across all three.
 
-claude 的令牌**只读**：不落库、不进日志、不回写，过期了也不去刷新 —— refresh token
-会轮换，抢着刷会把 Claude Code 自己那份挤掉。有一个测试专门盯着源码里不许出现任何
-写回动作。
+The claude token is **read-only**: never stored, logged, written back, or refreshed —
+refresh tokens rotate, and racing to refresh would evict Claude Code's own copy. A test
+watches the source for any write-back.
 
-codex 只给**整数**百分比，跑两轮很可能显示成「吃掉 0 个百分点」。这一点会在输出里
-明说，不然人会以为这一轮没花钱。
+codex only reports **integer** percentages, so a two-round run can show "0 percentage
+points consumed." The output says so explicitly, otherwise you'd think it was free.
 
-agy 的额度**按模型组分**（Gemini 一组，Claude+GPT 另一组），所以要按你用的模型选对
-组，否则会拿另一组的数字冒充自己的。
+agy's quota is **per model group** (Gemini in one, Claude+GPT in another), so you must
+pick the group matching your model or you'll report someone else's numbers.
 
-这套办法的出处和踩过的坑来自 [flufy3d/taiji](https://github.com/flufy3d/taiji) 的
-`hub/service/quota.py`。
+The approach and its pitfalls come from
+[flufy3d/taiji](https://github.com/flufy3d/taiji)'s `hub/service/quota.py`.
 
-**探针失败绝不影响主流程**：如实说「读不到」并把原因打出来，**绝不编一个数字**，
-也绝不因此让任务跑不下去。
+**A failing probe never affects the run**: it says "couldn't read it" and why. It never
+invents a number, and never blocks the task.
 
-### 6. 环境事实自动探测，**任务结论一个字都不许预先喂**
+### 6. Environment facts are auto-detected; **task conclusions are never pre-fed**
 
-`--evidence-hint` 很容易被用错。一开始它像是个方便的地方，可以把"我知道的事"都倒进去。
-但倒着倒着就会倒进这种东西：
+`--evidence-hint` is easy to misuse. It looks like a handy place to dump everything you
+know — until you dump this in:
 
-> "这个项目的分级是靠吃道具升的，不是靠里程 —— 里程这条轴是空的。"
+> "Tiers in this project come from pickups, not mileage — the mileage axis is empty."
 
-这句话是**假设者的活**。一旦预先喂进去，这一轮就再也不能说明"系统能自己发现问题"了 ——
-它只是把你写的答案抄了一遍。这个坑是实际踩过的。
+That sentence is **the hypothesizer's job**. Pre-feed it and the round can no longer
+demonstrate that the system finds problems on its own; it just recites your answer.
+This was hit for real. Hence four layers:
 
-所以现在划四层：
-
-| 层 | 谁产出 | 举例 |
+| Layer | Produced by | Example |
 |---|---|---|
-| **后端事实**（这家 CLI 的属性） | `Backend.env_notes()` | "agy 自带的 browser 工具在这台机器上装不上驱动" |
-| **机器事实**（这台机器的属性） | `environ.py` 自动探测 | "ms-playwright 缓存在，装 playwright 不用再下 100MB" |
-| **取证提示**（人的可选叮嘱） | `--evidence-hint`，**默认空** | "这个服务得先起 docker-compose" |
-| **任务结论**（该改什么） | **只能**由三个角色自己得出 | —— |
+| **Backend facts** (this CLI's properties) | `Backend.env_notes()` | "agy's built-in browser tool can't install its driver on this machine" |
+| **Machine facts** | `environ.py` auto-detection | "ms-playwright is cached, so installing playwright won't re-download 100MB" |
+| **Evidence hints** (your optional nudge) | `--evidence-hint`, **empty by default** | "this service needs docker-compose up first" |
+| **Task conclusions** (what to change) | **Only** the three roles | — |
 
-第一层跟第二层分开，是因为「agy 的浏览器有 bug」这种事只对 agy 成立 —— 换 codex 跑
-的时候再说一遍是纯噪音，还会误导它。
+The first two are separate because "agy's browser is broken" is true only for agy —
+repeating it under codex is pure noise and actively misleading. Both layers report only
+what was **actually observed** on this machine: no network, no quota, no guessing. A
+test asserts the injected block contains nothing project-specific.
 
-两层都只报**真的观测到的**东西：翻 agy 自己的日志确认内置 browser 工具是不是真的
-失败过、`ms-playwright` 缓存在不在、有没有 node/npm/git。不联网、不花额度、不猜；
-探测不到就什么都不说。有一个测试专门盯着这段自动注入的文本里不许出现任何项目相关的
-内容。
+### 7. Lessons burned into the code
 
-（顺带记一下那个 browser 工具的坑：agy 把 playwright-go 钉在了 driver 1.57.0，而微软已经
-不在 `/builds/driver/` 托管 driver zip 了，新旧 CDN 全 404，Linux 上一样 —— 上游
-[#638](https://github.com/google-antigravity/antigravity-cli/issues/638) /
-[#629](https://github.com/google-antigravity/antigravity-cli/issues/629)。坏的只是 agy
-内置的那个 Go 驱动，npm 上的 playwright 包是另一套东西，正常可用。）
+**Trust the payload, not the envelope.** A verifier call once returned
+`status: ERROR` + "The stream was interrupted" while `returncode` was 0 and
+`structured_output` was complete — the agent had finished, the CLI just never reset the
+envelope. Checking only `status` threw away 4 supported + 1 refuted verdicts, paid for a
+pointless resume, and wrote a lie into a commit message ("round 2: aborted").
+`Call.degraded` accepts any complete payload; `audit.py` then guards the whole *class* of
+this bug by comparing disk — every step writes `<stem>.raw.json` (raw) and `<stem>.json`
+(accepted), and anything with a usable payload but no accepted file gets reported loudly
+**before** the commit. Tested against 5 historical runs: caught the one incident, silent
+on the other four.
 
-### 7. 别信信封，看产出 —— 以及一条防止再犯的自查
+**Accepting a verdict ≠ accepting a correction.** The challenger showed a displacement
+was computed as full collider width (3.70 m) instead of the correct 4.35 m. The verifier
+accepted the `revise` verdict and wrote 3.70 into the code anyway — a 9% unavoidable-death
+hole found only in the next round. Root cause was the schema: the verdict was structured,
+the numeric correction was buried in free text. Now `corrections` is a first-class
+required field (`id`/`what`/`wrong`/`correct`/`basis`), the verifier must account for each
+one (`applied`/`rejected`/`not_applicable`), and coverage is **checked mechanically** by
+id. Rejections are allowed — invisible ones aren't.
 
-这套东西的立论是「别信 agent 的声明，看它测出来的读数」。结果它自己栽在同一个坑里。
+### 8. `--until`: stop when done, but **always err toward one more round**
 
-一次验证者调用返回了：
-
-```
-status            : ERROR
-error             : The stream was interrupted. Please continue the task you were working on.
-returncode        : 0            ← 正常退出
-structured_output : 完整
-response          : 连收尾总结都写完了
-```
-
-agent 真的把活干完了，中断的只是中途某一段流，agy 自己接上继续跑完，**只是信封上的
-`status` 没改回来**。而 `Call.ok` 只认 `status == "SUCCESS"`，于是这份完整产出被
-整个丢弃、转去续接、续接没成、整轮判死。代价：一份含 4 条实证 1 条证伪的验证结果消失，
-倒贴一次续接的额度，还在目标仓库的提交信息里写下一句假话（「第 2 轮：中止」）。
-
-**修法分两层。**
-
-一层是具体的：`Call.degraded` —— 有完整产出就认，别信信封，同时把后端报了什么
-如实打出来，不静默吞掉。
-
-另一层是防这**一整类**的：`audit.py`。同样的错误还能从别的地方再犯 —— 提前 return、
-schema 名改了导致产出落到别的文件名下、异常路径上漏了一次写盘。自查不去猜将来会
-怎么错，只做一件事：**比对磁盘**。每步都会写 `<stem>.raw.json`（后端原始返回）和
-`<stem>.json`（采纳后的产出），凡是「raw 里有可用产出、却没有对应的 .json」的，就是
-被丢掉的工作，跑完在提交**之前**大声报出来。这个判据不依赖任何一处具体逻辑，将来
-换了实现、换了后端照样成立。
-
-拿 5 个历史运行目录实测过：精确抓到那 1 次事故，对另外 4 个保持沉默。
-
-### 8. 采纳「裁决」不等于采纳「订正」
-
-质疑者算出假设者把某个位移搞错了——用了碰撞体全宽 3.70 m，而按几何应该是 4.35 m。
-验证者采纳了 `revise` 这个**裁决**，然后把 3.70 原样写进了代码。
-
-结果是一个必死率 9% 的窟窿，下一轮的假设者才把它翻出来。
-
-根因不在模型，在 schema：**裁决是结构化字段（`keep`/`revise`/`reject`），具体的数值
-订正却埋在 `flaw` 的自由文本里。** 结构化的东西下游一定会读，自由文本里的可以静默跳过。
-
-三层修：
-
-| 层 | 做法 |
-|---|---|
-| **schema** | `corrections` 提成一等字段，每条 critique 必填（没有就交空数组）。每条订正必须写全 `id` / `what` / `wrong` / `correct` / `basis` —— 少了 `correct` 或 `basis`，它就退化成又一段自由文本 |
-| **提示词** | 订正摊平成编号清单摆到验证者面前，明说「**采纳 revise 这个裁决，不等于采纳了订正的数值**」。它必须逐条给出 `applied` / `rejected` / `not_applicable`，`rejected` 得拿读数说话 |
-| **机械核对** | 跑完比对 id 覆盖情况。漏一条就连着正确值和错值一起点名。允许反驳订正，但**必须让人看见**，不能悄悄过去 |
-
-第三层是关键。只做前两层，等于又一次「信声明、不看读数」——而那正是这套东西存在的
-理由。（同样的道理见第 7 条的 `audit.py`。）
-
-### 9. `--until`：达成就收工，但**宁可多跑一轮**
-
-`--rounds 5` 开大了，任务第 2 轮就收敛了 —— 后面三轮每轮还要烧一百多万 token。而且
-没东西可改的时候硬凑三条假设，会逼着它去动**不该动的地方**。浪费之外还有风险。
+`--rounds 5` on a task that converges in round 2 burns a million+ tokens per extra round.
+Worse, with nothing left to fix it will manufacture three hypotheses and start touching
+things it shouldn't.
 
 ```bash
-hypoloop "把必死组合修掉" --rounds 5 --until "全速度段必死率为 0 且难度常数未改动"
+hypoloop "fix the unavoidable spawns" --rounds 5 \
+  --until "zero unavoidable deaths across all speeds, difficulty constants untouched"
 ```
 
-条件要写成**可判定**的。「变好了」这种没法判，等于没写。
+Write a **decidable** condition. "It got better" isn't one.
 
-判定由验证者给出，但**它得拿读数说话**：`goal.met=true` 时，`evidence` 必须逐项对上
-条件里的每一个要求。跑完调用方会把证据原样打出来，让你当场能质疑：
+The verifier decides, but **with readings**: when `goal.met=true`, `evidence` must
+address every clause. The evidence is printed verbatim so you can challenge it on the
+spot. **The failure direction must be "run another round," never "stop early wrongly"** —
+an extra round costs tokens; a wrong stop leaves unverified changes in someone's repo.
+So it does *not* stop when: no `--until`; the round errored; `goal` is missing or `null`
+(it's optional in the schema — missing means never judged); `met` isn't boolean `true`;
+or `evidence` is empty (and it says explicitly that the missing evidence is why).
 
-```
-  → 验证者判定结束条件已达成，它给的证据：
-      必死波次 0/200000（v=26~72 全速度段）
-      gap 最小值 15m、速度上限 72、出墙概率 0.75 —— 三个常数均未出现在 diff 中
-  结束条件已达成，跳过剩下的 3 轮。
-```
+`goal` being optional is the foundation of that safety, which is why it survived codex's
+strict schema as "required but nullable" — `null` maps one-to-one onto the old "missing,"
+and the reader is unchanged (§4).
 
-**这个功能的失败方向必须是「多跑一轮」，绝不能是「错误地提前停」。** 多跑一轮只是费点
-token；错误收工会把没验完的改动留在别人的仓库里。所以下面每一种情况都**不停**：
+## Where things land
 
-| 情况 | 为什么不停 |
-|---|---|
-| 没设 `--until` | 老老实实跑满 |
-| 那一轮报错了 | 结论本身就不可信 |
-| `goal` 字段缺失 / 是 `null` | 它在 schema 里是**可选的** —— 缺失就是没判过 |
-| `met` 不是布尔 `true`（`"true"`、`1`、`"yes"`…） | 只认真正的 `true` |
-| `evidence` 是空的 | 不认，而且**明说是因为没给证据才不认** |
-
-提示词里也把这个不对称明着告诉验证者了：「别为了让任务显得完成而填 true」。
-
-`goal` 的**可选**是这套安全性的地基，所以它扛住了 codex 那边的 strict schema：
-改写成「必填但可以是 null」，null 一一对应原来的「缺失」，读取端语义没变（见第 4 条）。
-
-## 产物落在哪
-
-全部在 `~/.hypoloop/`：
+Everything under `~/.hypoloop/`:
 
 ```
 ~/.hypoloop/
-  runs/<时间戳>-<任务名>/
-    roundN-hypotheses.json        # 各角色的结构化输出
-    roundN-critique.json
-    roundN-verification.json
-    roundN-*.prompt.md            # 发出去的完整提示词，可复现
-    roundN-*.raw.json             # 后端的原始返回，含 usage
-    report.md                     # 人看的报告
-  ledger.jsonl                    # 历次运行的 token 账
-  projects/<hash>.json            # 每个项目的默认配置（模型按后端分开存）
+  runs/<timestamp>-<task>/
+    roundN-{hypotheses,critique,verification}.json   # structured outputs
+    roundN-*.prompt.md                               # exact prompts sent, reproducible
+    roundN-*.raw.json                                # raw backend response, incl. usage
+    report.md
+  ledger.jsonl                                       # token ledger across runs
+  projects/<hash>.json                               # per-project defaults (models per backend)
 ```
 
-**目标项目里一个字节都不留** —— 只有验证者对源码的正当修改会留在那边。这是硬约束：
-用在别人的仓库上时，不能往人家的 `git status` 里塞东西。
+**Not one byte lands in the target project** — only the verifier's legitimate source
+edits. Hard constraint: when you point this at someone else's repo, it must not add
+anything to their `git status`.
 
-（模型名按后端分开存也是同一个道理：`--model gemini-3.8-flash-high --save-config`
-存下来的是**只对一家成立**的名字，下次 `--backend codex` 跑同一个项目时再递过去，
-就是拿 gemini 的模型名去问 codex。）
+(Models are stored per backend for the same reason: `--model gemini-3.8-flash-high
+--save-config` saves a name that means something to exactly one CLI. Reusing it under
+`--backend codex` would hand codex a Gemini model name.)
 
-## 开发
+## Development
 
 ```bash
 pip install -e .
 python -m unittest discover -s tests -t .
 ```
 
-fixture 全是从真实报文里截下来的，不是手写的 —— 手写 fixture 只能证明解析器和我脑子里
-的格式一致，证明不了它和这些 CLI 真实吐出来的东西一致。
+Every fixture is a verbatim capture of a real response. Hand-written fixtures only prove
+the parser matches what's in my head, not what these CLIs actually emit.
 
 ## License
 
