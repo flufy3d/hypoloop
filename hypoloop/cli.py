@@ -24,6 +24,7 @@ EPILOG = """\
   cd E:/Projects/my-game
   hypoloop "让游戏画面更好更精致一些" --rounds 2 --commit
   hypoloop "找出并修掉首屏白屏的根因" --evidence-hint "用无头浏览器截图对比首屏"
+  hypoloop "把必死组合修掉" --rounds 5 --until "全速度段必死率为 0 且难度常数未改动"
   hypoloop --resume ~/.hypoloop/runs/20260903-174503-xxx -   # 验证者超时后续跑
   hypoloop quota
 
@@ -63,6 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--evidence-hint", dest="evidence_hint",
                    help="给验证者的取证建议，比如「用无头浏览器截图对比」。"
                         "不填它自己看着办。")
+    p.add_argument("--until", dest="stop_when", metavar="条件",
+                   help="结束条件。达成了就收工，跳过剩下的轮次 —— --rounds 开大了"
+                        "又提前收敛时，能省掉整轮的 token。"
+                        "条件要写成**可判定**的，比如「必死率降到 0 且难度常数未改动」；"
+                        "写「变好了」这种没法判的等于没写。"
+                        "判定由验证者拿读数给出，判不准一律算没达成、继续跑。")
     p.add_argument("--commit", action="store_true",
                    help="整个 run 的改动收成一个提交，放在 hypoloop/<run> 分支上")
     p.add_argument("--allow-dirty", action="store_true",
@@ -129,6 +136,7 @@ def main(argv=None) -> int:
         "model": args.model,
         "verifier_model": args.verifier_model,
         "evidence_hint": args.evidence_hint,
+        "stop_when": args.stop_when,
     }
     cfg = config.load(target, overrides)
     if args.save_config:

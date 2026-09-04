@@ -116,6 +116,23 @@
           "evidence"
         ]
       }
+    },
+    "goal": {
+      "type": "object",
+      "description": "**只有调用方给了结束条件时才需要填。** 没给就整个省略这个字段。\n填了的话，met 是你对「这个条件是否已经达成」的判断，evidence 必须是**你这一轮真的测出来的读数**，能让人照着复核。\n注意：met=true 会让调用方**跳过剩下所有轮次**。判不准、证据不足、只测了一部分 —— 一律填 false。**多跑一轮只是费点 token，错误地提前收工会把没验完的改动留在仓库里。**",
+      "properties": {
+        "met": {
+          "type": "boolean"
+        },
+        "evidence": {
+          "type": "string",
+          "description": "支持这个判断的具体读数。met=true 时必须逐项对上结束条件里的每一个要求；met=false 时写清还差什么"
+        }
+      },
+      "required": [
+        "met",
+        "evidence"
+      ]
     }
   },
   "required": [

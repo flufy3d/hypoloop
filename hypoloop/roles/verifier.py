@@ -92,6 +92,21 @@ def build_prompt(task: str, root: Path, cfg: Dict[str, Any],
         "node_modules、截图、日志、脚本之类的残渣。",
         "  - 装东西前先看看有没有现成的；能用标准库/系统自带的就别装。",
     ]
+    stop_when = (cfg.get("stop_when") or "").strip()
+    if stop_when:
+        blocks += [
+            "",
+            "【结束条件】\n" + stop_when,
+            "调用方设了这个条件：一旦达成，**剩下的轮次全部跳过**。所以你要在 goal "
+            "字段里给出判断和证据。",
+            "  - met=true 时，evidence 必须**逐项**对上条件里的每一个要求，"
+            "每项都给出你这一轮真的测出来的读数。",
+            "  - 判不准、证据不足、只验了一部分、条件里有一半没测 —— **一律 false**，"
+            "并在 evidence 里写清还差什么。",
+            "  - **别为了让任务显得完成而填 true。** 多跑一轮只是多花点 token；"
+            "错误地提前收工，会把没验完的改动留在别人的仓库里。这个代价大得多。",
+        ]
+
     env = environ.block()
     if env:
         blocks += ["", env]

@@ -37,6 +37,9 @@ DEFAULTS: Dict[str, Any] = {
     "verifier_timeout_sec": 2700,
     # 给验证者的取证提示。空着它就自己看着办；填了就是「这个项目该这么取证」。
     "evidence_hint": "",
+    # 结束条件。填了就是「达成这个就收工，剩下的轮次别跑了」。
+    # 空着就老老实实跑满 rounds。判定必须由验证者拿读数给出，见 loop._goal_met。
+    "stop_when": "",
 }
 
 

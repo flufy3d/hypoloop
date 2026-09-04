@@ -160,6 +160,11 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
             rounds.append(_one_round(
                 i, total_rounds, task, target, cfg, rounds, run_dir, ledger,
                 dry_run=dry_run, resume=resuming, log=log))
+            if not dry_run and _goal_met(cfg, rounds[-1], log):
+                skipped = total_rounds - i
+                if skipped > 0:
+                    log("  结束条件已达成，跳过剩下的 {0} 轮。".format(skipped))
+                break
     except WorktreeChanged as e:
         log("")
         log("!! 不变量被破坏，循环中止：\n{0}".format(e))
@@ -282,6 +287,38 @@ def _one_round(i: int, total: int, task: str, target: Path, cfg: Dict[str, Any],
     for line in _correction_report(out["challenge"], out["verify"]):
         log(line)
     return out
+
+
+def _goal_met(cfg: Dict[str, Any], rnd: Dict[str, Any],
+              log: Callable[[str], None]) -> bool:
+    """`--until` 的结束条件达成了没有。
+
+    `--rounds` 开大又提前收敛时，后面每一轮都是白烧一百多万 token；而且没东西可改时
+    硬凑三条假设，会逼着它去动不该动的地方。所以给个出口。
+
+    **这个判断的失败方向必须是「多跑一轮」，绝不能是「错误地提前停」。** 所以：
+      - 没设 --until   → 不停
+      - 那一轮出错了   → 不停（结论本身就不可信）
+      - goal 字段缺失   → 不停（schema 里它是可选的，缺失就是没判）
+      - met 不是 True  → 不停
+      - evidence 空的  → 不停，并且**明确说是因为没给证据才不认**
+    只有「明确 met=true 且带着证据」才收工，而且把证据打出来让人当场能质疑。
+    """
+    if not (cfg.get("stop_when") or "").strip():
+        return False
+    if rnd.get("error"):
+        return False
+    goal = (rnd.get("verify") or {}).get("goal")
+    if not isinstance(goal, dict) or goal.get("met") is not True:
+        return False
+    evidence = str(goal.get("evidence") or "").strip()
+    if not evidence:
+        log("  验证者说结束条件达成了，但**没给证据** —— 不认，继续跑。")
+        return False
+    log("  → 验证者判定结束条件已达成，它给的证据：")
+    for line in evidence.splitlines() or [evidence]:
+        log("      " + line.strip())
+    return True
 
 
 def _correction_report(critique: Dict[str, Any],
