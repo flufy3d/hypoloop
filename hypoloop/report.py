@@ -125,10 +125,10 @@ def write_report(run_dir: Path, *, task: str, target: Path,
     ]
     deltas = [
         "- 5 小时窗口消耗：{0}".format(
-            "{0:+.3f} 个百分点".format(-consumed["five_hour"])
+            "{0:.3f} 个百分点".format(consumed["five_hour"])
             if consumed.get("five_hour") is not None else "读不到"),
         "- 周窗口消耗：{0}".format(
-            "{0:+.3f} 个百分点".format(-consumed["weekly"])
+            "{0:.3f} 个百分点".format(consumed["weekly"])
             if consumed.get("weekly") is not None else "读不到"),
     ]
     lines += deltas + ["", "```", ledger_text, "```", ""]

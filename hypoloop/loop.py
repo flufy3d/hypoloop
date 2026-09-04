@@ -401,12 +401,12 @@ def _step(role: str, prompt: str, target: Path, cfg: Dict[str, Any],
         # 接上去只把结果要回来 —— 实测能从一次跑满 45 分钟的超时里捞回完整结论。
         log("    这一步没拿到结果（{0}），试着续接会话把已做的工作要回来…".format(
             call.get("status")))
-        # 抢救失败也是真花了额度的，先记账再判成败，否则账本会比实际额度跌幅少一截。
-        rescued = salvage(call, cwd=target, model=model, mode=mode,
-                          schema_path=config.schema(schema_name),
-                          timeout_sec=SALVAGE_TIMEOUT_SEC,
-                          on_attempt=lambda c: ledger.add(
-                              role + "(续接)", round_no, c))
+        with ReadOnlyGuard(target, role + "(续接)", enabled=readonly):
+            rescued = salvage(call, cwd=target, model=model, mode=mode,
+                              schema_path=config.schema(schema_name),
+                              timeout_sec=SALVAGE_TIMEOUT_SEC,
+                              on_attempt=lambda c: ledger.add(
+                                  role + "(续接)", round_no, c))
         if rescued is None:
             raise LoopError(_role_failed(role, call))
         report.dump_json(run_dir / (stem + ".salvage.json"), dict(rescued))

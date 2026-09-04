@@ -67,8 +67,9 @@ def _deep_merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def load(root: Path, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """默认值 ← 每项目配置 ← 命令行覆盖。命令行里的 None 一律忽略。"""
+def load(root: Path, overrides: Optional[Dict[str, Any]] = None,
+         base: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """默认值 ← 每项目配置 ← 底层配置（如续跑的 manifest）← 命令行覆盖。命令行里的 None 一律忽略。"""
     cfg = dict(DEFAULTS)
     path = project_config_path(root)
     if path.exists():
@@ -76,6 +77,8 @@ def load(root: Path, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, An
             cfg = _deep_merge(cfg, json.loads(path.read_text(encoding="utf-8")))
         except (OSError, ValueError):
             pass    # 配置坏了就用默认值跑，别因为一个配置文件把任务卡死
+    if base:
+        cfg = _deep_merge(cfg, base)
     clean = {k: v for k, v in (overrides or {}).items() if v is not None}
     return _deep_merge(cfg, clean)
 

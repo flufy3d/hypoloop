@@ -138,7 +138,8 @@ def main(argv=None) -> int:
         "evidence_hint": args.evidence_hint,
         "stop_when": args.stop_when,
     }
-    cfg = config.load(target, overrides)
+    manifest_cfg = manifest.get("config") if isinstance(manifest.get("config"), dict) else None
+    cfg = config.load(target, overrides, base=manifest_cfg)
     if args.save_config:
         path = config.save_project(
             target, {k: v for k, v in overrides.items() if v is not None})
