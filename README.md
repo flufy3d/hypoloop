@@ -1,6 +1,6 @@
 # hypoloop
 
-三个角色，一个循环，跑在 [agy](https://antigravity.google)（Antigravity CLI）上：
+三个角色，一个循环，跑在**你本机装着的 CLI agent** 上：
 
 | 角色 | 干什么 | 能改文件吗 |
 |---|---|---|
@@ -11,9 +11,18 @@
 一轮走完，下一轮把**上一轮的证据和裁决**喂回去 —— 所以这个循环是收敛的，不是三个
 agent 各说各话。
 
+hypoloop 自己不调模型。它调 [agy](https://antigravity.google)（Antigravity CLI，
+Gemini）、[codex](https://developers.openai.com/codex/cli)（OpenAI Codex CLI）或
+[claude](https://claude.com/claude-code)（Claude Code CLI）—— **装了哪家用哪家，
+一家都不强制依赖**，也可以同一个任务换一家再跑一遍。
+
 ```
 $ cd E:/Projects/neon-racer
 $ hypoloop "让游戏画面更好更精致一些" --rounds 2 --commit
+
+运行目录：~/.hypoloop/runs/20260903-174503-让游戏画面更好更精致一些
+目标项目：E:\Projects\neon-racer
+后端：agy（Antigravity CLI（Gemini））　假设者/质疑者 gemini-3.8-flash-medium　验证者 gemini-3.8-flash-high
 
 开跑前额度（Gemini Models，档位 Google AI Pro (g1-pro-tier)）：
   5 小时窗口  剩余 92.149%   重置于 2026-09-03 22:08
@@ -22,21 +31,22 @@ $ hypoloop "让游戏画面更好更精致一些" --rounds 2 --commit
 ============================================================
 第 1/2 轮
 ============================================================
-  假设者 跑起来了（gemini-3.8-flash-medium，plan）…
+  假设者 跑起来了（gemini-3.8-flash-medium，只读）…
     用时 125s，190,898 tokens
   → 提了 3 条假设
-  质疑者 跑起来了（gemini-3.8-flash-medium，plan）…
+  质疑者 跑起来了（gemini-3.8-flash-medium，只读）…
     用时 208s，254,372 tokens
   → 3 条意见（驳回 0、要求修正 2），另提 1 条新假设
-  验证者 跑起来了（gemini-3.8-flash-high，accept-edits）…
+  验证者 跑起来了（gemini-3.8-flash-high，可写）…
     用时 549s，655,129 tokens
   → 实证 1、证伪 3、未决 0；改了 1 个文件
-  已提交第 1 轮的 1 个文件
 ============================================================
 第 2/2 轮
 ============================================================
   ...
   → 实证 3、证伪 0、未决 0；改了 3 个文件
+
+已提交 3 个文件（整个 run 一个提交）。
 
 跑完后额度（Gemini Models，档位 Google AI Pro (g1-pro-tier)）：
   5 小时窗口  剩余 76.936%   重置于 2026-09-03 22:08
@@ -44,7 +54,7 @@ $ hypoloop "让游戏画面更好更精致一些" --rounds 2 --commit
   本次吃掉 5 小时窗口 的 15.213 个百分点
   本次吃掉 周窗口 的 2.536 个百分点
 
-本次 token 消耗（来自 agy 每次调用返回的 usage）：
+本次 token 消耗（来自后端每次调用返回的 usage）：
   角色           调用数  total_tokens
   验证者              2     1,285,923
   假设者              1       194,133
@@ -76,19 +86,34 @@ $ hypoloop "让游戏画面更好更精致一些" --rounds 2 --commit
 pip install git+https://github.com/flufy3d/hypoloop
 ```
 
-前提：装好 [agy](https://antigravity.google) 并登录过。hypoloop 会自己在 PATH 和
-`~/AppData/Local/agy/bin/` 里找它；都找不到就设 `HYPOLOOP_AGY=<agy 的完整路径>`。
+然后至少装一家 CLI agent 并登录过。装了哪几家自己看：
+
+```
+$ hypoloop backends
+名字      是什么                       装了没       默认模型
+agy*    Antigravity CLI（Gemini）   是         gemini-3.8-flash-medium / gemini-3.8-flash-high
+codex   OpenAI Codex CLI          是         gpt-5.6-terra:medium / gpt-5.6-terra:high
+claude  Claude Code CLI           是         sonnet / opus
+
+带 * 的是不指定 --backend 时会用的那家。
+```
+
+找不到可执行文件时，各自设一个环境变量指过去就行：`HYPOLOOP_AGY` /
+`HYPOLOOP_CODEX` / `HYPOLOOP_CLAUDE`。（agy 装完默认不在 PATH 上，跑一次
+`agy install` 就好。）
 
 ## 用
 
 ```bash
 hypoloop "任务描述"                      # 在目标项目目录里跑，默认 2 轮
 hypoloop "任务" -C /path/to/project      # 或者指定目录
+hypoloop "任务" --backend codex          # 换一家跑
 hypoloop "任务" --rounds 3 --commit      # 收一个提交到 hypoloop/<run> 分支
 hypoloop "任务" --dry-run                # 只打印将要发的提示词，一个 token 不花
 hypoloop "任务" --evidence-hint "用无头浏览器截图对比首屏"
 hypoloop "任务" --rounds 5 --until "必死率为 0 且难度常数未改动"   # 达成就收工
-hypoloop quota                           # 只看额度
+hypoloop backends                        # 本机装了哪几家
+hypoloop quota                           # 装了的几家的额度一起报
 hypoloop history                         # 看历史 token 账
 ```
 
@@ -96,27 +121,35 @@ hypoloop history                         # 看历史 token 账
 
 | 开关 | 作用 |
 |---|---|
+| `--backend {agy,codex,claude}` | 用哪家跑。**不指定就用装了的第一家，并在开跑时说清楚用的是谁** |
 | `--rounds N` | 跑几轮（默认 2） |
 | `--hypotheses N` | 每轮提几条假设（默认 3） |
-| `--model` / `--verifier-model` | 分别指定只读角色和验证者的模型 |
+| `--model` / `--verifier-model` | 分别指定只读角色和验证者的模型；不给就用该后端自己的中档/高档 |
 | `--evidence-hint` | 给验证者的取证建议；**默认空，通常就该空着**（见下） |
 | `--until "<条件>"` | 结束条件。达成了就跳过剩下的轮次（见下） |
 | `--commit` | 整个 run 的改动**收成一个提交**，放在 `hypoloop/<run>` 分支上 |
 | `--allow-dirty` | 目标不是 git 仓库、或工作区不干净时也硬跑 |
-| `--save-config` | 把本次参数存成这个项目的默认值 |
+| `--save-config` | 把本次参数存成这个项目的默认值（模型按后端分开存） |
 
-## 八件它认真对待的事
+## 九件它认真对待的事
 
 ### 1. 「只有验证者能改文件」是**机制**，不是提示词里的一句请求
 
 提示词里写「你不许改文件」，模型哪天不听就破了，而且破了没人知道。所以：
 
-- 假设者和质疑者跑在 agy 的 `--mode plan`（实测只往 agy 自己的 brain 目录写产物）；
+- 假设者和质疑者跑在各家自己的只读档（agy `--mode plan`、codex `-s read-only`、
+  claude `--permission-mode plan`）；
 - **更重要的是**，`guard.py` 在它们跑之前给工作区拍一次指纹，跑完再拍一次，不一致
   就中止整轮并打印出到底改了什么。
 
+第二道是兜底，而且是可执行的。这一条在多后端下更重要：**新接一家后端时，谁也不知道
+那家的只读到底有多硬。** 指纹是我们自己的，对谁都一样成立。
+
 指纹覆盖内容而不只是文件名 —— `git status --porcelain` 只列未跟踪文件的路径，
 内容被改了它一个字都不会变，所以未跟踪文件的内容单独哈希。
+
+（抢救调用也在指纹里面。漏掉的话，只读角色的续接就成了整套系统里唯一一个没人看着的
+写入口。）
 
 ### 2. 「往被实证的方向走」靠 schema 逼出来
 
@@ -130,39 +163,92 @@ hypoloop history                         # 看历史 token 账
 起本地服务、装个无头浏览器截图对比 …… 都行。hypoloop 不替它做主，也就不用背它的
 依赖。唯一的边界是：取证用的工具和临时产物不许留在目标仓库里。
 
-### 3. agy 有三个会静默出错的坑，都踩过了
+### 3. 后端是可插拔的，加一家只有两步
 
-这三条都是实测撞出来的，改 `agy.py` 之前先读一遍：
+`hypoloop/backends/` 下一个模块一家。契约在 `backends/base.py`，就四件事：
+
+1. 非交互跑一段提示词，**提示词走 stdin**（不走 argv —— Windows 命令行总长上限
+   32767 字符，带着代码上下文的提示词迟早在某个大项目上炸，而炸出来的「参数过长」
+   跟提示词毫无关系，极难定位）
+2. 能按给定的 JSON Schema 吐**结构化输出**
+3. 有**只读模式**
+4. 能报本次用量，最好还能报剩余额度
+
+加一家（opencode、aider、随便什么）：写个 `Backend` 子类，在
+`backends/__init__.py` 的 `_MODULES` 里加一行。**循环、角色提示词、guard、账本、
+报告一个字都不用改。**
+
+三家现在是这么映射的：
+
+| | agy | codex | claude |
+|---|---|---|---|
+| 提示词 | stdin | `exec … -` | stdin |
+| 结构化输出 | `--json-schema <文件>` → `structured_output` | `--output-schema <文件>` + `-o` 收最后一条消息 | `--json-schema '<JSON 字面量>'` → `structured_output` |
+| 只读 | `--mode plan` | `-s read-only`（**操作系统级沙箱**） | `--permission-mode plan` |
+| 可写 | `--mode accept-edits` | `-s workspace-write` + 开网络 | `--permission-mode acceptEdits` |
+| 续接 | `--conversation <id>` | `exec resume <thread_id>` | `--resume <session_id>` |
+| 强弱两档 | flash-medium / flash-high | 同模型的 `model_reasoning_effort`，写成 `模型:档位` | sonnet / opus |
+
+### 4. 每家都有会**静默出错**的坑，都踩过了
+
+改后端代码之前先读一遍这张表。每一条都是实测撞出来的，不是从文档里抄的。
+
+**agy**
 
 | 坑 | 症状 | 怎么办 |
 |---|---|---|
-| **agy 不认子进程的 cwd** | 不给 `--add-dir`，agent 在 `~/.gemini/antigravity-cli/scratch` 里干活。**全程 `status=SUCCESS`**：你让它建文件，它回报「已创建」，路径在 scratch 底下；你让它读代码，它看到一个空目录。 | 每次调用都带 `--add-dir <目标目录>` |
-| **headless 下权限一律自动拒绝** | 「a tool required the "read_file" permission that headless mode cannot prompt for, so it was auto-denied」——只读角色连代码都读不了，直接交白卷 | 所有角色都得给 `--dangerously-skip-permissions`；只读靠 `--mode plan` + 指纹管，不是靠扣这个标志 |
-| **`--disable-slash-commands` 会顺手废掉 `--mode`** | agy 只是警告一句「--mode plan has no effect while slash command expansion is disabled」，然后只读角色**悄悄变成了可写角色** | 别用这个标志 |
+| **不认子进程的 cwd** | 不给 `--add-dir`，agent 在 `~/.gemini/antigravity-cli/scratch` 里干活。**全程 `status=SUCCESS`**：你让它建文件，它回报「已创建」，路径在 scratch 底下；你让它读代码，它看到一个空目录。 | 每次调用都带 `--add-dir <目标目录>` |
+| **headless 下权限一律自动拒绝** | 「a tool required the "read_file" permission that headless mode cannot prompt for, so it was auto-denied」——只读角色连代码都读不了，直接交白卷 | 所有角色都给 `--dangerously-skip-permissions`；只读靠 `--mode plan` + 指纹管，不是靠扣这个标志 |
+| **`--disable-slash-commands` 顺手废掉 `--mode`** | agy 只警告一句「--mode plan has no effect while slash command expansion is disabled」，然后只读角色**悄悄变成了可写角色** | 别用这个标志 |
 
-### 4. 额度是**真额度**，不是本地估算
+**codex**
 
-agy 没有任何 `quota` / `usage` 子命令，`~/.gemini` 下也没有额度文件。真数字只有一条路：
+| 坑 | 症状 | 怎么办 |
+|---|---|---|
+| **走 OpenAI strict schema** | 每个对象都得 `additionalProperties: false`、每个字段都得进 `required`，否则 HTTP 400 `invalid_json_schema`，一个 token 没花就整步失败 | `codex.strictify()` 把 schema **机械改写**成严格版落到临时文件。**不改原 schema** —— 那等于让一家后端的序列化限制反过来改写整套系统的语义（见第 9 条，`goal` 的可选是有意义的） |
+| **退出码会盖住真正的原因** | 上游 400 在事件流里说得清清楚楚，可如果先按「退出码非 0」写死错误信息，人看到的是一句跟原因毫无关系的「codex 退出码 1」 | 先读事件流里的 `error`/`turn.failed`，**再**退回退出码；而且把嵌套 JSON 里最里层那句人话挖出来 |
+| **没有 `--print-timeout`** | 我们超时就得杀进程，`capture_output` 那条路上什么都拿不到 —— **连 `thread_id` 都没有**，于是抢救功能直接失效 | stdout 落盘再解析。杀掉之后照样能从已写出的事件里抠到 `thread_id` 和那条可能已经完整的结构化消息 |
+| **`exec resume` 不收 `-s` / `-C`** | 沙箱档位和工作目录从原会话继承。照着新开调用的样子拼参数，抢救**当场失败**，而报出来的「to pass '-s' as a value, use '-- -s'」跟真正的原因毫无关系 | 续接时只带它收的那几个。**这条是实跑一次「记住一个词 → 续接问它」的往返测出来的** —— agy 和 claude 都通，唯独 codex 这条静默地废着，光看 argv 前三项根本发现不了 |
+| **不给 total_tokens** | 得自己加。`cached_input_tokens` 是 `input_tokens` 的**子集**，三个一起加会把账算大 | `total = input + output` |
 
-`-v=3` 是 glog 的 verbosity 标志（`agy --help` 里没列），打开后 agy 会把完整 HTTP
-响应体写进 `~/.gemini/antigravity-cli/log/cli-*.log`。跑一次 `agy -v=3 models` ——
-它只列模型、不生成内容，**不烧额度** —— 日志里就有：
+**claude**
 
-```
-v1internal:retrieveUserQuotaSummary
-  groups[].buckets[]{window: "5h"|"weekly", resetTime, remainingFraction}
-```
+| 坑 | 症状 | 怎么办 |
+|---|---|---|
+| **`--json-schema` 要字面量不要路径** | 给文件路径直接报「--json-schema is not valid JSON」。这个错很容易被当成 schema 写错了，其实是参数形态不对 | 读文件内容再传 |
+| **`--dangerously-skip-permissions` 会拆掉 plan 模式** | 它就是 bypassPermissions | 只读角色**不加**这个标志。claude 没有 agy 那个「headless 下读工具被自动拒绝」的毛病，plan 模式下读工具本来就放行 |
+| **cache_read 混进总量会让账失真** | 它是另一个计费档（约为新输入的十分之一），长会话里压倒性地大 | 不计入 `total_tokens`，单列一栏 |
 
-额度**按模型组分**（Gemini 一组，Claude+GPT 另一组），所以要按你用的模型选对组，
-否则会拿另一组的数字冒充自己的。同一份日志里的 `loadCodeAssist` 给订阅档位。
+### 5. 额度是**真额度**，不是本地估算 —— 而且三条路都不烧额度
+
+三家的口子完全不同，所以没有统一抽象，只有统一的读数类型（`quota.py`）：
+
+| | 怎么拿的 | 烧额度吗 | 稳不稳 |
+|---|---|---|---|
+| **agy** | `agy -v=3 models` 把 HTTP 响应体打进 `~/.gemini/antigravity-cli/log/cli-*.log`，再读出 `v1internal:retrieveUserQuotaSummary` | 否（只列模型，不生成内容） | `-v=3` 是**未公开**的 glog 标志，随时可能失效 |
+| **codex** | `codex app-server` 的 `account/rateLimits/read` | 否（只读账户状态） | 协议里的**正式方法**（`codex app-server generate-json-schema` 能导出整份协议），比 agy 那条稳 |
+| **claude** | `GET /api/oauth/usage`，凭据蹭 Claude Code 自己维护的 `~/.claude/.credentials.json` | 否 | 跟在 claude 里敲 `/usage` 看到的是同一个数 |
+
+口径统一成「还剩百分之几」：agy 原生给 `remainingFraction`，codex 和 claude 给
+`used_percent`，在各自后端里换算完再进来。这样「这次吃掉多少」对三家都成立。
+
+claude 的令牌**只读**：不落库、不进日志、不回写，过期了也不去刷新 —— refresh token
+会轮换，抢着刷会把 Claude Code 自己那份挤掉。有一个测试专门盯着源码里不许出现任何
+写回动作。
+
+codex 只给**整数**百分比，跑两轮很可能显示成「吃掉 0 个百分点」。这一点会在输出里
+明说，不然人会以为这一轮没花钱。
+
+agy 的额度**按模型组分**（Gemini 一组，Claude+GPT 另一组），所以要按你用的模型选对
+组，否则会拿另一组的数字冒充自己的。
 
 这套办法的出处和踩过的坑来自 [flufy3d/taiji](https://github.com/flufy3d/taiji) 的
-`hub/service/quota.py`，这里按 agy 1.1.25 重新实测过。
+`hub/service/quota.py`。
 
-**它随时可能失效**（`-v=3` 是未公开标志）。失效时 hypoloop 会如实说"读不到"并把原因
-打出来，**绝不编一个数字**，也绝不因此让任务跑不下去。
+**探针失败绝不影响主流程**：如实说「读不到」并把原因打出来，**绝不编一个数字**，
+也绝不因此让任务跑不下去。
 
-### 5. 环境事实自动探测，**任务结论一个字都不许预先喂**
+### 6. 环境事实自动探测，**任务结论一个字都不许预先喂**
 
 `--evidence-hint` 很容易被用错。一开始它像是个方便的地方，可以把"我知道的事"都倒进去。
 但倒着倒着就会倒进这种东西：
@@ -172,17 +258,21 @@ v1internal:retrieveUserQuotaSummary
 这句话是**假设者的活**。一旦预先喂进去，这一轮就再也不能说明"系统能自己发现问题"了 ——
 它只是把你写的答案抄了一遍。这个坑是实际踩过的。
 
-所以现在划三层：
+所以现在划四层：
 
 | 层 | 谁产出 | 举例 |
 |---|---|---|
-| **环境事实**（机器的属性） | `environ.py` 自动探测并注入验证者 | "agy 自带的 browser 工具在这台机器上装不上驱动" |
+| **后端事实**（这家 CLI 的属性） | `Backend.env_notes()` | "agy 自带的 browser 工具在这台机器上装不上驱动" |
+| **机器事实**（这台机器的属性） | `environ.py` 自动探测 | "ms-playwright 缓存在，装 playwright 不用再下 100MB" |
 | **取证提示**（人的可选叮嘱） | `--evidence-hint`，**默认空** | "这个服务得先起 docker-compose" |
 | **任务结论**（该改什么） | **只能**由三个角色自己得出 | —— |
 
-`environ.py` 只报**这台机器上真的观测到的**东西：翻 agy 自己的日志确认内置 browser
-工具是不是真的失败过、`ms-playwright` 缓存在不在、有没有 node/npm/git。不联网、不花额度、
-不猜；探测不到就什么都不说。有一个测试专门盯着这段自动注入的文本里不许出现任何项目相关的
+第一层跟第二层分开，是因为「agy 的浏览器有 bug」这种事只对 agy 成立 —— 换 codex 跑
+的时候再说一遍是纯噪音，还会误导它。
+
+两层都只报**真的观测到的**东西：翻 agy 自己的日志确认内置 browser 工具是不是真的
+失败过、`ms-playwright` 缓存在不在、有没有 node/npm/git。不联网、不花额度、不猜；
+探测不到就什么都不说。有一个测试专门盯着这段自动注入的文本里不许出现任何项目相关的
 内容。
 
 （顺带记一下那个 browser 工具的坑：agy 把 playwright-go 钉在了 driver 1.57.0，而微软已经
@@ -191,7 +281,7 @@ v1internal:retrieveUserQuotaSummary
 [#629](https://github.com/google-antigravity/antigravity-cli/issues/629)。坏的只是 agy
 内置的那个 Go 驱动，npm 上的 playwright 包是另一套东西，正常可用。）
 
-### 6. 别信信封，看产出 —— 以及一条防止再犯的自查
+### 7. 别信信封，看产出 —— 以及一条防止再犯的自查
 
 这套东西的立论是「别信 agent 的声明，看它测出来的读数」。结果它自己栽在同一个坑里。
 
@@ -206,25 +296,25 @@ response          : 连收尾总结都写完了
 ```
 
 agent 真的把活干完了，中断的只是中途某一段流，agy 自己接上继续跑完，**只是信封上的
-`status` 没改回来**。而 `AgyCall.ok` 只认 `status == "SUCCESS"`，于是这份完整产出被
+`status` 没改回来**。而 `Call.ok` 只认 `status == "SUCCESS"`，于是这份完整产出被
 整个丢弃、转去续接、续接没成、整轮判死。代价：一份含 4 条实证 1 条证伪的验证结果消失，
 倒贴一次续接的额度，还在目标仓库的提交信息里写下一句假话（「第 2 轮：中止」）。
 
 **修法分两层。**
 
-一层是具体的：`AgyCall.degraded` —— 有完整产出就认，别信信封，同时把 agy 报了什么
+一层是具体的：`Call.degraded` —— 有完整产出就认，别信信封，同时把后端报了什么
 如实打出来，不静默吞掉。
 
 另一层是防这**一整类**的：`audit.py`。同样的错误还能从别的地方再犯 —— 提前 return、
 schema 名改了导致产出落到别的文件名下、异常路径上漏了一次写盘。自查不去猜将来会
-怎么错，只做一件事：**比对磁盘**。每步都会写 `<stem>.raw.json`（agy 原始返回）和
+怎么错，只做一件事：**比对磁盘**。每步都会写 `<stem>.raw.json`（后端原始返回）和
 `<stem>.json`（采纳后的产出），凡是「raw 里有可用产出、却没有对应的 .json」的，就是
 被丢掉的工作，跑完在提交**之前**大声报出来。这个判据不依赖任何一处具体逻辑，将来
-换了实现照样成立。
+换了实现、换了后端照样成立。
 
 拿 5 个历史运行目录实测过：精确抓到那 1 次事故，对另外 4 个保持沉默。
 
-### 7. 采纳「裁决」不等于采纳「订正」
+### 8. 采纳「裁决」不等于采纳「订正」
 
 质疑者算出假设者把某个位移搞错了——用了碰撞体全宽 3.70 m，而按几何应该是 4.35 m。
 验证者采纳了 `revise` 这个**裁决**，然后把 3.70 原样写进了代码。
@@ -243,9 +333,9 @@ schema 名改了导致产出落到别的文件名下、异常路径上漏了一�
 | **机械核对** | 跑完比对 id 覆盖情况。漏一条就连着正确值和错值一起点名。允许反驳订正，但**必须让人看见**，不能悄悄过去 |
 
 第三层是关键。只做前两层，等于又一次「信声明、不看读数」——而那正是这套东西存在的
-理由。（同样的道理见第 6 条的 `audit.py`。）
+理由。（同样的道理见第 7 条的 `audit.py`。）
 
-### 8. `--until`：达成就收工，但**宁可多跑一轮**
+### 9. `--until`：达成就收工，但**宁可多跑一轮**
 
 `--rounds 5` 开大了，任务第 2 轮就收敛了 —— 后面三轮每轮还要烧一百多万 token。而且
 没东西可改的时候硬凑三条假设，会逼着它去动**不该动的地方**。浪费之外还有风险。
@@ -273,11 +363,14 @@ token；错误收工会把没验完的改动留在别人的仓库里。所以下
 |---|---|
 | 没设 `--until` | 老老实实跑满 |
 | 那一轮报错了 | 结论本身就不可信 |
-| `goal` 字段缺失 | 它在 schema 里是**可选的** —— 缺失就是没判过 |
+| `goal` 字段缺失 / 是 `null` | 它在 schema 里是**可选的** —— 缺失就是没判过 |
 | `met` 不是布尔 `true`（`"true"`、`1`、`"yes"`…） | 只认真正的 `true` |
 | `evidence` 是空的 | 不认，而且**明说是因为没给证据才不认** |
 
 提示词里也把这个不对称明着告诉验证者了：「别为了让任务显得完成而填 true」。
+
+`goal` 的**可选**是这套安全性的地基，所以它扛住了 codex 那边的 strict schema：
+改写成「必填但可以是 null」，null 一一对应原来的「缺失」，读取端语义没变（见第 4 条）。
 
 ## 产物落在哪
 
@@ -290,14 +383,18 @@ token；错误收工会把没验完的改动留在别人的仓库里。所以下
     roundN-critique.json
     roundN-verification.json
     roundN-*.prompt.md            # 发出去的完整提示词，可复现
-    roundN-*.raw.json             # agy 的原始返回，含 usage
+    roundN-*.raw.json             # 后端的原始返回，含 usage
     report.md                     # 人看的报告
   ledger.jsonl                    # 历次运行的 token 账
-  projects/<hash>.json            # 每个项目的默认配置
+  projects/<hash>.json            # 每个项目的默认配置（模型按后端分开存）
 ```
 
 **目标项目里一个字节都不留** —— 只有验证者对源码的正当修改会留在那边。这是硬约束：
 用在别人的仓库上时，不能往人家的 `git status` 里塞东西。
+
+（模型名按后端分开存也是同一个道理：`--model gemini-3.8-flash-high --save-config`
+存下来的是**只对一家成立**的名字，下次 `--backend codex` 跑同一个项目时再递过去，
+就是拿 gemini 的模型名去问 codex。）
 
 ## 开发
 
@@ -306,8 +403,8 @@ pip install -e .
 python -m unittest discover -s tests -t .
 ```
 
-额度解析的 fixture 是从真实 agy 日志里截下来的，不是手写的 —— 手写 fixture 只能证明
-解析器和我脑子里的格式一致，证明不了它和 agy 真实吐出来的东西一致。
+fixture 全是从真实报文里截下来的，不是手写的 —— 手写 fixture 只能证明解析器和我脑子里
+的格式一致，证明不了它和这些 CLI 真实吐出来的东西一致。
 
 ## License
 

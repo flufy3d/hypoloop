@@ -12,10 +12,11 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from . import audit, config, report
-from .agy import MODE_READONLY, MODE_WRITE, AgyCall, run_agy, salvage
+from .backends import (MODE_LABEL, MODE_READONLY, MODE_WRITE, Backend, Call,
+                       choose)
 from .guard import ReadOnlyGuard, WorktreeChanged, is_git_repo, run_git
 from .ledger import Ledger
-from .quota import Quota, consumed, format_quota, probe
+from .quota import consumed, format_quota
 from .roles import challenger, hypothesizer, verifier
 
 
@@ -88,7 +89,7 @@ def _default_log(msg: str) -> None:
     print(msg, flush=True)
 
 
-def _role_failed(role: str, call: AgyCall) -> str:
+def _role_failed(role: str, call: Call) -> str:
     bits = [call.get("error"), call.get("stderr"), call.get("response")]
     detail = next((str(b)[:800] for b in bits if b), "（没有更多信息）")
     return "{0} 这一步没成（status={1}）：{2}".format(role, call.get("status"), detail)
@@ -100,6 +101,7 @@ def _dirty(root: Path) -> str:
 
 
 def run(task: str, target: Path, cfg: Dict[str, Any], *,
+        backend: Optional[Backend] = None,
         dry_run: bool = False, commit: bool = False, allow_dirty: bool = False,
         resume_dir: Optional[Path] = None,
         log: Callable[[str], None] = _default_log) -> Dict[str, Any]:
@@ -109,6 +111,15 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
     缺的那些 —— 验证者超时不该逼着把假设者和质疑者重跑一遍（那是几十万 token 的
     纯浪费，而且会把上一轮那份已经很扎实的质疑意见丢掉）。
     """
+    backend = backend or choose(cfg.get("backend"))
+    # 模型名留空就用这家后端自己的默认档位。这件事不能靠 DEFAULTS 里写死一个名字 ——
+    # 那个名字只对一家成立，换一家就是把 gemini 的模型名递给 codex。
+    cfg = dict(cfg)
+    cfg["backend"] = backend.name
+    cfg["model"] = cfg.get("model") or backend.default_model
+    cfg["verifier_model"] = (cfg.get("verifier_model")
+                             or backend.default_verifier_model)
+
     resuming = resume_dir is not None
     target = Path(target).resolve()
     if not target.is_dir():
@@ -135,9 +146,11 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
 
     log("运行目录：{0}{1}".format(run_dir, "（续跑）" if resuming else ""))
     log("目标项目：{0}{1}".format(target, "" if git else "（非 git）"))
+    log("后端：{0}（{1}）　假设者/质疑者 {2}　验证者 {3}".format(
+        backend.name, backend.label, cfg["model"], cfg["verifier_model"]))
     log("")
 
-    quota_before = probe(model=cfg["model"])
+    quota_before = backend.quota(cfg["model"])
     log(format_quota(quota_before, "开跑前额度"))
     log("")
 
@@ -159,7 +172,7 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
         for i in range(1, total_rounds + 1):
             rounds.append(_one_round(
                 i, total_rounds, task, target, cfg, rounds, run_dir, ledger,
-                dry_run=dry_run, resume=resuming, log=log))
+                backend=backend, dry_run=dry_run, resume=resuming, log=log))
             if not dry_run and _goal_met(cfg, rounds[-1], log):
                 skipped = total_rounds - i
                 if skipped > 0:
@@ -174,7 +187,7 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
         log("!! {0}".format(e))
         rounds.append({"round": len(rounds) + 1, "error": str(e)})
 
-    # 自查：有没有哪一步 agy 给了完整产出、我们却没采纳。放在提交之前 —— 万一真丢了
+    # 自查：有没有哪一步后端给了完整产出、我们却没采纳。放在提交之前 —— 万一真丢了
     # 东西，人得在那句「已提交」之前先看到，而不是事后从日志里翻。详见 audit.py。
     dropped = audit.render(run_dir) if not dry_run else ""
     if dropped:
@@ -188,7 +201,7 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
         _commit_run(target, task, rounds, log)
 
     log("")
-    quota_after = probe(model=cfg["model"])
+    quota_after = backend.quota(cfg["model"])
     log(format_quota(quota_after, "跑完后额度"))
     spent = consumed(quota_before, quota_after)
     for key, label in (("five_hour", "5 小时窗口"), ("weekly", "周窗口")):
@@ -207,7 +220,9 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
     report_path = report.write_report(
         run_dir, task=task, target=target, rounds=rounds,
         ledger_text=ledger.render(), quota_before=quota_before,
-        quota_after=quota_after, consumed=spent, git_summary=git_summary)
+        quota_after=quota_after, consumed=spent, git_summary=git_summary,
+        backend="{0}（{1} / {2}）".format(
+            backend.name, cfg["model"], cfg["verifier_model"]))
     ledger.record(task=task, target=str(target), run_dir=str(run_dir),
                   quota_before=dict(quota_before), quota_after=dict(quota_after),
                   consumed=spent)
@@ -216,14 +231,14 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
     log("报告：{0}".format(report_path))
     return {
         "run_dir": run_dir, "report": report_path, "rounds": rounds,
-        "ledger": ledger, "quota_before": quota_before,
+        "ledger": ledger, "quota_before": quota_before, "backend": backend,
         "quota_after": quota_after, "consumed": spent, "branch": branch,
     }
 
 
 def _one_round(i: int, total: int, task: str, target: Path, cfg: Dict[str, Any],
                history: List[Dict[str, Any]], run_dir: Path, ledger: Ledger,
-               *, dry_run: bool, resume: bool = False,
+               *, backend: Backend, dry_run: bool, resume: bool = False,
                log: Callable[[str], None]) -> Dict[str, Any]:
     out: Dict[str, Any] = {"round": i}
     log("=" * 60)
@@ -233,20 +248,20 @@ def _one_round(i: int, total: int, task: str, target: Path, cfg: Dict[str, Any],
     # ---- 假设者（只读）----
     prompt = hypothesizer.build_prompt(task, target, cfg, history)
     out["hypothesize"] = _step(
-        "假设者", prompt, target, cfg, run_dir, ledger, i,
+        "假设者", prompt, target, cfg, run_dir, ledger, i, backend,
         model=cfg["model"], mode=MODE_READONLY, schema_name="hypotheses",
         timeout=cfg["readonly_timeout_sec"], readonly=True,
         dry_run=dry_run, resume=resume, log=log)
     if dry_run:
         out["challenge"] = _step(
             "质疑者", challenger.build_prompt(task, target, cfg, {}, history),
-            target, cfg, run_dir, ledger, i, model=cfg["model"],
+            target, cfg, run_dir, ledger, i, backend, model=cfg["model"],
             mode=MODE_READONLY, schema_name="critique",
             timeout=cfg["readonly_timeout_sec"], readonly=True,
             dry_run=True, log=log)
         out["verify"] = _step(
             "验证者", verifier.build_prompt(task, target, cfg, {}, {}, history),
-            target, cfg, run_dir, ledger, i, model=cfg["verifier_model"],
+            target, cfg, run_dir, ledger, i, backend, model=cfg["verifier_model"],
             mode=MODE_WRITE, schema_name="verification",
             timeout=cfg["verifier_timeout_sec"], readonly=False,
             dry_run=True, log=log)
@@ -260,7 +275,7 @@ def _one_round(i: int, total: int, task: str, target: Path, cfg: Dict[str, Any],
     # ---- 质疑者（只读）----
     prompt = challenger.build_prompt(task, target, cfg, out["hypothesize"], history)
     out["challenge"] = _step(
-        "质疑者", prompt, target, cfg, run_dir, ledger, i,
+        "质疑者", prompt, target, cfg, run_dir, ledger, i, backend,
         model=cfg["model"], mode=MODE_READONLY, schema_name="critique",
         timeout=cfg["readonly_timeout_sec"], readonly=True,
         dry_run=False, resume=resume, log=log)
@@ -275,7 +290,7 @@ def _one_round(i: int, total: int, task: str, target: Path, cfg: Dict[str, Any],
     prompt = verifier.build_prompt(
         task, target, cfg, out["hypothesize"], out["challenge"], history)
     out["verify"] = _step(
-        "验证者", prompt, target, cfg, run_dir, ledger, i,
+        "验证者", prompt, target, cfg, run_dir, ledger, i, backend,
         model=cfg["verifier_model"], mode=MODE_WRITE, schema_name="verification",
         timeout=cfg["verifier_timeout_sec"], readonly=False,
         dry_run=False, resume=resume, log=log)
@@ -360,7 +375,8 @@ def _correction_report(critique: Dict[str, Any],
 
 
 def _step(role: str, prompt: str, target: Path, cfg: Dict[str, Any],
-          run_dir: Path, ledger: Ledger, round_no: int, *, model: str, mode: str,
+          run_dir: Path, ledger: Ledger, round_no: int, backend: Backend,
+          *, model: str, mode: str,
           schema_name: str, timeout: int, readonly: bool, dry_run: bool,
           log: Callable[[str], None], resume: bool = False) -> Dict[str, Any]:
     stem = "round{0}-{1}".format(round_no, schema_name)
@@ -376,37 +392,39 @@ def _step(role: str, prompt: str, target: Path, cfg: Dict[str, Any],
 
     if dry_run:
         log("")
-        log("--- {0}（{1}，{2}）的提示词 ---".format(role, model, mode))
+        log("--- {0}（{1} {2}，{3}）的提示词 ---".format(
+            role, backend.name, model, MODE_LABEL.get(mode, mode)))
         log(prompt)
         return {}
 
-    log("  {0} 跑起来了（{1}，{2}）…".format(role, model, mode))
+    log("  {0} 跑起来了（{1}，{2}）…".format(
+        role, model, MODE_LABEL.get(mode, mode)))
     t0 = time.time()
     guard = ReadOnlyGuard(target, role, enabled=readonly)
     with guard:
-        call = run_agy(
+        call = backend.run(
             prompt, cwd=target, model=model, mode=mode,
             schema_path=config.schema(schema_name), timeout_sec=int(timeout))
     ledger.add(role, round_no, call)
     report.dump_json(run_dir / (stem + ".raw.json"), dict(call))
 
     if call.degraded:
-        # 有完整产出就认，别信信封上的 status。详见 AgyCall.degraded 的注释。
-        log("    agy 报了 {0}，但结构化产出是完整的，直接用（不重跑、不续接）。".format(
-            call.get("status")))
-        log("      agy 的原话：{0}".format(str(call.get("error") or "").strip()[:200]))
+        # 有完整产出就认，别信信封上的 status。详见 Call.degraded 的注释。
+        log("    {0} 报了 {1}，但结构化产出是完整的，直接用（不重跑、不续接）。".format(
+            backend.name, call.get("status")))
+        log("      它的原话：{0}".format(str(call.get("error") or "").strip()[:200]))
 
     if not call.usable:
-        # 超时/出错不等于白干。agy 到点就丢弃 agent 已完成的工作，但那段会话还在，
+        # 超时/出错不等于白干。CLI 到点就丢弃 agent 已完成的工作，但那段会话还在，
         # 接上去只把结果要回来 —— 实测能从一次跑满 45 分钟的超时里捞回完整结论。
         log("    这一步没拿到结果（{0}），试着续接会话把已做的工作要回来…".format(
             call.get("status")))
         with ReadOnlyGuard(target, role + "(续接)", enabled=readonly):
-            rescued = salvage(call, cwd=target, model=model, mode=mode,
-                              schema_path=config.schema(schema_name),
-                              timeout_sec=SALVAGE_TIMEOUT_SEC,
-                              on_attempt=lambda c: ledger.add(
-                                  role + "(续接)", round_no, c))
+            rescued = backend.salvage(
+                call, cwd=target, model=model, mode=mode,
+                schema_path=config.schema(schema_name),
+                timeout_sec=SALVAGE_TIMEOUT_SEC,
+                on_attempt=lambda c: ledger.add(role + "(续接)", round_no, c))
         if rescued is None:
             raise LoopError(_role_failed(role, call))
         report.dump_json(run_dir / (stem + ".salvage.json"), dict(rescued))

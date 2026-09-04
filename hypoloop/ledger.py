@@ -1,6 +1,6 @@
 """token 账本。
 
-agy 每次调用的 JSON 里都带 usage，这里按角色累计，再把每次运行的总账追加到
+每家 CLI 每次调用都会报本次用量，backend 把它归一成同一组字段，这里按角色累计，再把每次运行的总账追加到
 ~/.hypoloop/ledger.jsonl。额度百分比是厂商给的真数字（见 quota.py），token 数是
 这里自己数的 —— 两者互相印证，任务结束时一起报。
 """
@@ -18,7 +18,7 @@ FIELDS = ("input_tokens", "output_tokens", "thinking_tokens",
 
 
 class Ledger:
-    """一次运行里所有 agy 调用的账。"""
+    """一次运行里所有后端调用的账。"""
 
     def __init__(self) -> None:
         self.calls: List[Dict[str, Any]] = []
@@ -29,7 +29,7 @@ class Ledger:
             "role": role,
             "round": round_no,
             "status": call.get("status"),
-            "conversation_id": call.get("conversation_id"),
+            "session_key": call.get("session_key") or call.get("conversation_id"),
             "duration_seconds": call.get("duration_seconds"),
             "usage": {k: int(usage.get(k) or 0) for k in FIELDS},
         })
@@ -51,8 +51,8 @@ class Ledger:
 
     def render(self) -> str:
         if not self.calls:
-            return "本次没有产生任何 agy 调用。"
-        rows = ["本次 token 消耗（来自 agy 每次调用返回的 usage）：",
+            return "本次没有产生任何后端调用。"
+        rows = ["本次 token 消耗（来自后端每次调用返回的 usage）：",
                 "  {0:<8}{1:>8}{2:>14}".format("角色", "调用数", "total_tokens")]
         for role, slot in self.by_role().items():
             rows.append("  {0:<8}{1:>8}{2:>14,}".format(

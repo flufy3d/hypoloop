@@ -27,9 +27,14 @@ LEDGER = STATE_DIR / "ledger.jsonl"
 PKG_DIR = Path(__file__).resolve().parent
 SCHEMA_DIR = PKG_DIR / "schemas"
 
+#: 模型名留空 = 用当前后端自己的默认值（见 backends/<name>.py 的
+#: `default_model` / `default_verifier_model`）。**不能在这里写死一个 gemini 模型名**
+#: —— 那样换到 codex 或 claude 上会把一个它们不认识的模型名递过去。
 DEFAULTS: Dict[str, Any] = {
-    "model": "gemini-3.8-flash-medium",
-    "verifier_model": "gemini-3.8-flash-high",
+    # 用哪家 CLI。空 = 自动挑本机装了的第一家，并在开跑时说清楚挑了谁。
+    "backend": "",
+    "model": "",
+    "verifier_model": "",
     "rounds": 2,
     "hypotheses": 3,
     # 只读角色几分钟就够；验证者要真动手改代码 + 自己搭取证手段，给足时间。
@@ -67,14 +72,30 @@ def _deep_merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+#: 这些键的取值只对某一家后端有意义（模型名尤其如此），所以在项目配置里按后端分开存。
+PER_BACKEND_KEYS = ("model", "verifier_model")
+
+
 def load(root: Path, overrides: Optional[Dict[str, Any]] = None,
-         base: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """默认值 ← 每项目配置 ← 底层配置（如续跑的 manifest）← 命令行覆盖。命令行里的 None 一律忽略。"""
+         base: Optional[Dict[str, Any]] = None,
+         backend: str = "") -> Dict[str, Any]:
+    """默认值 ← 每项目配置 ← 该后端的每项目配置 ← 底层配置（续跑的 manifest）← 命令行。
+
+    命令行里的 None 一律忽略。
+
+    多出来的那一层「该后端的每项目配置」是必须的：`--model` 存下来的是
+    `gemini-3.8-flash-high` 这种**只对一家成立**的名字，下次换 `--backend codex` 跑
+    同一个项目时再把它递过去，就是拿 gemini 的模型名去问 codex —— 所以按后端分开存。
+    """
     cfg = dict(DEFAULTS)
     path = project_config_path(root)
     if path.exists():
         try:
-            cfg = _deep_merge(cfg, json.loads(path.read_text(encoding="utf-8")))
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            cfg = _deep_merge(cfg, saved)
+            per = (saved.get("backends") or {}).get(backend) if backend else None
+            if isinstance(per, dict):
+                cfg = _deep_merge(cfg, per)
         except (OSError, ValueError):
             pass    # 配置坏了就用默认值跑，别因为一个配置文件把任务卡死
     if base:
@@ -83,7 +104,8 @@ def load(root: Path, overrides: Optional[Dict[str, Any]] = None,
     return _deep_merge(cfg, clean)
 
 
-def save_project(root: Path, patch: Dict[str, Any]) -> Path:
+def save_project(root: Path, patch: Dict[str, Any],
+                 backend: str = "") -> Path:
     ensure_dirs()
     path = project_config_path(root)
     current: Dict[str, Any] = {}
@@ -92,6 +114,11 @@ def save_project(root: Path, patch: Dict[str, Any]) -> Path:
             current = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             current = {}
+    patch = dict(patch)
+    if backend:
+        per = {k: patch.pop(k) for k in PER_BACKEND_KEYS if k in patch}
+        if per:
+            current = _deep_merge(current, {"backends": {backend: per}})
     current = _deep_merge(current, patch)
     current["_target"] = str(Path(root).resolve())
     path.write_text(json.dumps(current, ensure_ascii=False, indent=2),

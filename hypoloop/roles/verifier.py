@@ -11,6 +11,19 @@ from ._shared import as_json, history_briefing, project_tree
 NAME = "验证者"
 
 
+def _backend_notes(cfg: Dict[str, Any]) -> List[str]:
+    """当前后端自己探到的环境事实（比如 agy 的 browser 工具在这台机器上是坏的）。
+
+    这类事实只对某一家 CLI 成立，所以不放在 environ.py 里 —— 换成 codex 跑的时候
+    再告诉它「agy 的浏览器有 bug」是纯噪音，还会误导它。
+    """
+    from .. import backends
+    try:
+        return backends.get(cfg.get("backend") or "").env_notes()
+    except Exception:      # noqa: BLE001 —— 环境探测失败不该让整轮跑不起来
+        return []
+
+
 def corrections(critique: Dict[str, Any]) -> List[Dict[str, Any]]:
     """把质疑者散在各条意见里的订正项摊平成一张清单。"""
     out: List[Dict[str, Any]] = []
@@ -107,7 +120,7 @@ def build_prompt(task: str, root: Path, cfg: Dict[str, Any],
             "错误地提前收工，会把没验完的改动留在别人的仓库里。这个代价大得多。",
         ]
 
-    env = environ.block()
+    env = environ.block(extra=_backend_notes(cfg))
     if env:
         blocks += ["", env]
     if hint:

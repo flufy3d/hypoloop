@@ -106,13 +106,18 @@ def write_report(run_dir: Path, *, task: str, target: Path,
                  rounds: List[Dict[str, Any]], ledger_text: str,
                  quota_before: Any, quota_after: Any,
                  consumed: Dict[str, Optional[float]],
-                 git_summary: Optional[str] = None) -> Path:
+                 git_summary: Optional[str] = None,
+                 backend: Optional[str] = None) -> Path:
     lines = [
         "# hypoloop 运行报告",
         "",
         "**任务**：{0}".format(task),
         "",
         "**目标项目**：`{0}`".format(target),
+        "",
+        # 报告要能自证是谁跑的：同一个任务换一家再跑一遍时，两份报告摆在一起
+        # 必须一眼看得出区别，否则读数就没法归因。
+        "**后端**：{0}".format(backend or "未记录"),
         "",
         "## 额度",
         "",

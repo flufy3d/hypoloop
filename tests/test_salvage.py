@@ -1,14 +1,36 @@
 """超时抢救的测试。
 
-agy 的 print 模式到点就把 agent 已完成的工作全部丢弃，只回一个 status=ERROR。
+CLI 的 print/exec 模式到点就把 agent 已完成的工作全部丢弃，只回一个空壳错误。
 实测被这个坑掉过一次：45 分钟、12.6 万 token、36 次输出，最后拿到一个空壳。
-salvage 用 --conversation 接回那段会话，只把结论要回来。
+抢救的做法是接回那段会话，只把结论要回来。
+
+抢救逻辑在 `backends/base.py` 的 `Backend.salvage`，**三家共用一份** —— 各家的差别
+只有「续接的 id 叫什么、命令行怎么写」，那部分在各自的 `run()` 里。所以这里用一个假
+后端来测这份共用逻辑，再单独测各家的 id 归一（见 test_backends.py）。
 """
 
 import unittest
 from pathlib import Path
 
-from hypoloop import agy
+from hypoloop.backends import agy
+from hypoloop.backends.base import Backend, Call
+
+
+class _FakeBackend(Backend):
+    """记下 run 被怎么调的，并按脚本返回。"""
+
+    name = "fake"
+
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    def binary(self):
+        return "fake"
+
+    def run(self, prompt, **kw):
+        self.calls.append((prompt, kw))
+        return Call(self.result)
 
 
 class TestSalvageArgv(unittest.TestCase):
@@ -22,51 +44,43 @@ class TestSalvageArgv(unittest.TestCase):
                          agy.build_argv("agy", model="m", mode="plan"))
 
 
-class _Recorder:
-    """记下 run_agy 被怎么调的，并按脚本返回。"""
-
-    def __init__(self, result):
-        self.result = result
-        self.calls = []
-
-    def __call__(self, prompt, **kw):
-        self.calls.append((prompt, kw))
-        return self.result
-
-
 class TestSalvage(unittest.TestCase):
-    def setUp(self):
-        self._orig = agy.run_agy
+    def _salvage(self, failed, rescued, **kw):
+        be = _FakeBackend(rescued)
+        out = be.salvage(Call(failed), cwd=Path("."), model="m", mode="write",
+                         **kw)
+        return out, be.calls
 
-    def tearDown(self):
-        agy.run_agy = self._orig
-
-    def _salvage(self, failed, rescued):
-        agy.run_agy = _Recorder(rescued)
-        out = agy.salvage(failed, cwd=Path("."), model="m", mode="accept-edits")
-        return out, agy.run_agy.calls
-
-    def test_returns_none_without_a_conversation_id(self):
+    def test_returns_none_without_a_session_id(self):
         # 没有会话 id 就无从续接 —— 别去发一个注定失败的请求
-        agy.run_agy = _Recorder(agy.AgyCall(status="SUCCESS"))
-        failed = agy.AgyCall(status="ERROR", error="timeout waiting for response")
-        self.assertIsNone(
-            agy.salvage(failed, cwd=Path("."), model="m", mode="accept-edits"))
-        self.assertEqual(agy.run_agy.calls, [])
+        out, calls = self._salvage(
+            {"status": "ERROR", "error": "timeout waiting for response"},
+            {"status": "SUCCESS"})
+        self.assertIsNone(out)
+        self.assertEqual(calls, [])
 
     def test_resumes_the_same_conversation(self):
-        failed = agy.AgyCall(status="ERROR", conversation_id="conv-9")
-        good = agy.AgyCall(status="SUCCESS",
-                           structured_output={"summary": "ok", "evidence": []})
-        out, calls = self._salvage(failed, good)
+        out, calls = self._salvage(
+            {"status": "ERROR", "conversation_id": "conv-9"},
+            {"status": "SUCCESS", "structured_output": {"summary": "ok",
+                                                        "evidence": []}})
         self.assertIsNotNone(out)
-        self.assertEqual(calls[0][1]["conversation_id"], "conv-9")
+        self.assertEqual(calls[0][1]["resume_key"], "conv-9")
         self.assertEqual(out["salvaged_from"], "conv-9")
 
+    def test_session_key_is_normalised_across_backends(self):
+        """三家的会话 id 叫法不同（conversation_id / thread_id / session_id），
+        抢救那段共用代码只认 `Call.session_key`，所以归一必须在这里成立。"""
+        for key in ("conversation_id", "thread_id", "session_id", "session_key"):
+            out, calls = self._salvage(
+                {"status": "ERROR", key: "id-" + key},
+                {"status": "SUCCESS", "structured_output": {"a": 1}})
+            self.assertEqual(calls[0][1]["resume_key"], "id-" + key, key)
+
     def test_salvage_prompt_forbids_new_work_and_invented_readings(self):
-        failed = agy.AgyCall(status="ERROR", conversation_id="conv-9")
-        good = agy.AgyCall(status="SUCCESS", structured_output={"summary": "ok"})
-        _, calls = self._salvage(failed, good)
+        _, calls = self._salvage(
+            {"status": "ERROR", "conversation_id": "conv-9"},
+            {"status": "SUCCESS", "structured_output": {"summary": "ok"}})
         prompt = calls[0][0]
         self.assertIn("不要再做任何新工作", prompt)
         self.assertIn("inconclusive", prompt)
@@ -75,27 +89,22 @@ class TestSalvage(unittest.TestCase):
     def test_failed_salvage_returns_none_not_a_half_result(self):
         # 抢救失败就该老实返回 None，让调用方按原样报错；
         # 回一个没有 structured_output 的壳会让上层以为这一步成了
-        failed = agy.AgyCall(status="ERROR", conversation_id="conv-9")
-        for bad in (agy.AgyCall(status="ERROR", conversation_id="conv-9"),
-                    agy.AgyCall(status="SUCCESS")):          # 成功但没产出
-            out, _ = self._salvage(failed, bad)
+        for bad in ({"status": "ERROR", "conversation_id": "conv-9"},
+                    {"status": "SUCCESS"}):          # 成功但没产出
+            out, _ = self._salvage(
+                {"status": "ERROR", "conversation_id": "conv-9"}, bad)
             self.assertIsNone(out)
 
     def test_salvage_uses_a_short_timeout(self):
-        failed = agy.AgyCall(status="ERROR", conversation_id="conv-9")
-        good = agy.AgyCall(status="SUCCESS", structured_output={"summary": "ok"})
-        agy.run_agy = _Recorder(good)
-        agy.salvage(failed, cwd=Path("."), model="m", mode="accept-edits",
-                    timeout_sec=300)
-        self.assertEqual(agy.run_agy.calls[0][1]["timeout_sec"], 300)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        _, calls = self._salvage(
+            {"status": "ERROR", "conversation_id": "conv-9"},
+            {"status": "SUCCESS", "structured_output": {"summary": "ok"}},
+            timeout_sec=300)
+        self.assertEqual(calls[0][1]["timeout_sec"], 300)
 
 
 class TestDegradedIsNotFailure(unittest.TestCase):
-    """agy 报错但产出完整时，不许当成失败丢掉。
+    """后端报错但产出完整时，不许当成失败丢掉。
 
     实际撞到的那次：status=ERROR + "The stream was interrupted. Please continue
     the task you were working on."，可 returncode=0、structured_output 完整、
@@ -115,7 +124,7 @@ class TestDegradedIsNotFailure(unittest.TestCase):
     }
 
     def test_degraded_call_is_usable(self):
-        call = agy.AgyCall(self.REAL)
+        call = Call(self.REAL)
         self.assertFalse(call.ok)          # 信封确实是 ERROR
         self.assertTrue(call.degraded)     # 但产出是完整的
         self.assertTrue(call.usable)
@@ -125,12 +134,12 @@ class TestDegradedIsNotFailure(unittest.TestCase):
         for bad in ({"status": "ERROR", "usage": {}},
                     {"status": "TIMEOUT", "structured_output": None},
                     {"status": "PARSE_ERROR", "structured_output": "不是 dict"}):
-            call = agy.AgyCall(bad)
+            call = Call(bad)
             self.assertFalse(call.degraded, bad)
             self.assertFalse(call.usable, bad)
 
     def test_success_is_not_degraded(self):
-        call = agy.AgyCall({"status": "SUCCESS", "structured_output": {"a": 1}})
+        call = Call({"status": "SUCCESS", "structured_output": {"a": 1}})
         self.assertTrue(call.ok)
         self.assertFalse(call.degraded)
         self.assertTrue(call.usable)
@@ -141,15 +150,10 @@ class TestSalvageBilling(unittest.TestCase):
 
     def _run(self, rescued_blob):
         billed = []
-        orig = agy.run_agy
-        agy.run_agy = lambda *a, **k: agy.AgyCall(rescued_blob)
-        try:
-            out = agy.salvage(
-                agy.AgyCall({"status": "ERROR", "conversation_id": "c1"}),
-                cwd=Path("."), model="m", mode="accept-edits",
-                on_attempt=billed.append)
-        finally:
-            agy.run_agy = orig
+        be = _FakeBackend(rescued_blob)
+        out = be.salvage(Call({"status": "ERROR", "conversation_id": "c1"}),
+                         cwd=Path("."), model="m", mode="write",
+                         on_attempt=billed.append)
         return out, billed
 
     def test_failed_salvage_is_still_billed(self):
@@ -166,7 +170,13 @@ class TestSalvageBilling(unittest.TestCase):
 
     def test_no_conversation_means_no_call_and_no_bill(self):
         billed = []
-        out = agy.salvage(agy.AgyCall({"status": "ERROR"}), cwd=Path("."),
-                          model="m", mode="accept-edits", on_attempt=billed.append)
+        be = _FakeBackend({"status": "SUCCESS"})
+        out = be.salvage(Call({"status": "ERROR"}), cwd=Path("."), model="m",
+                         mode="write", on_attempt=billed.append)
         self.assertIsNone(out)
         self.assertEqual(billed, [])
+        self.assertEqual(be.calls, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

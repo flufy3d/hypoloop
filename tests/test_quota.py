@@ -2,12 +2,16 @@
 
 fixture 是从真实的 agy 1.1.25 日志里截下来的，不是手写的 —— 手写 fixture 只能证明
 解析器和我脑子里的格式一致，证明不了它和 agy 真实吐出来的东西一致。
+
+解析代码在 hypoloop/backends/agy.py：额度探针是**一家一个**，没有统一抽象，
+因为三家的口子完全不同（日志 / JSON-RPC / HTTP）。统一的只有读数类型（quota.py）。
 """
 
 import unittest
 from pathlib import Path
 
-from hypoloop import quota
+from hypoloop import quota as shared
+from hypoloop.backends import agy as quota
 
 FIXTURE = Path(__file__).parent / "fixtures" / "agy-quota.log"
 
@@ -86,18 +90,19 @@ class TestProbeResilience(unittest.TestCase):
         self.assertTrue(q.get("note"))
 
     def test_format_never_invents_numbers(self):
-        q = quota.Quota(available=False, note="没读到")
-        self.assertIn("读不到", quota.format_quota(q))
-        self.assertNotIn("%", quota.format_quota(q))
+        # 格式化和「吃掉了多少」是**三家共用**的，所以测的是 quota 模块本身
+        q = shared.Quota(available=False, note="没读到")
+        self.assertIn("读不到", shared.format_quota(q))
+        self.assertNotIn("%", shared.format_quota(q))
 
     def test_consumed_is_none_when_either_side_missing(self):
-        good = quota.Quota(available=True, five_hour={"remaining_pct": 90.0},
-                           weekly={"remaining_pct": 99.0})
-        bad = quota.Quota(available=False, five_hour={}, weekly={})
-        self.assertIsNone(quota.consumed(good, bad)["five_hour"])
-        after = quota.Quota(five_hour={"remaining_pct": 88.5},
-                            weekly={"remaining_pct": 98.5})
-        self.assertAlmostEqual(quota.consumed(good, after)["five_hour"], 1.5)
+        good = shared.Quota(available=True, five_hour={"remaining_pct": 90.0},
+                            weekly={"remaining_pct": 99.0})
+        bad = shared.Quota(available=False, five_hour={}, weekly={})
+        self.assertIsNone(shared.consumed(good, bad)["five_hour"])
+        after = shared.Quota(five_hour={"remaining_pct": 88.5},
+                             weekly={"remaining_pct": 98.5})
+        self.assertAlmostEqual(shared.consumed(good, after)["five_hour"], 1.5)
 
 
 if __name__ == "__main__":

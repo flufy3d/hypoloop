@@ -4,7 +4,8 @@ import json
 import unittest
 from pathlib import Path
 
-from hypoloop import agy, config
+from hypoloop import config
+from hypoloop.backends import agy
 from hypoloop.ledger import Ledger
 
 # 真实的 agy --output-format json 输出（agy 1.1.25 实测抄下来的）

@@ -16,6 +16,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from hypoloop import environ
+from hypoloop.backends import agy as agy_backend
+from hypoloop.backends.agy import AgyBackend
 
 # 从这台机器上真实的 agy 日志里抠出来的一行，不是手写的
 REAL_LINE = (
@@ -29,11 +31,25 @@ REAL_LINE = (
 
 def _fake_home(lines=()):
     tmp = TemporaryDirectory()
-    log_dir = Path(tmp.name) / environ.AGY_LOG_DIR
+    log_dir = Path(tmp.name) / agy_backend.AGY_LOG_DIR
     log_dir.mkdir(parents=True)
     (log_dir / "cli-20260903_170750.log").write_text(
         "\n".join(lines), encoding="utf-8")
     return tmp
+
+
+def _block_with_agy(tmp):
+    """把 agy 后端探到的事实和机器通用事实拼起来 —— 就是验证者真正看到的那段。
+
+    agy 的 browser bug 只对 agy 成立，所以它由 AgyBackend.env_notes() 报，
+    不再写死在 environ 里；换 codex/claude 跑的时候这段本来就不该出现。
+    """
+    orig = agy_backend.HOME
+    agy_backend.HOME = Path(tmp.name)
+    try:
+        return environ.block(Path(tmp.name), extra=AgyBackend().env_notes())
+    finally:
+        agy_backend.HOME = orig
 
 
 class TestAgyBrowserDetection(unittest.TestCase):
@@ -42,7 +58,7 @@ class TestAgyBrowserDetection(unittest.TestCase):
             pass
         tmp = _fake_home(["something boring", REAL_LINE, "more noise"])
         try:
-            reason = environ.agy_browser_broken(Path(tmp.name))
+            reason = agy_backend.browser_broken(Path(tmp.name))
             self.assertIn("404", reason)
             self.assertIn("playwright-1.57.0-win32_x64.zip", reason)
             # 不要把 glog 的前缀（时间戳、go 文件行号）也抓进来
@@ -55,20 +71,20 @@ class TestAgyBrowserDetection(unittest.TestCase):
         # 没在这台机器上观测到，就一个字都不说 —— 这是观测，不是预测
         tmp = _fake_home(["all quiet", "nothing to see"])
         try:
-            self.assertEqual(environ.agy_browser_broken(Path(tmp.name)), "")
+            self.assertEqual(agy_backend.browser_broken(Path(tmp.name)), "")
         finally:
             tmp.cleanup()
 
     def test_missing_log_dir_is_not_a_crash(self):
         with TemporaryDirectory() as empty:
-            self.assertEqual(environ.agy_browser_broken(Path(empty)), "")
+            self.assertEqual(agy_backend.browser_broken(Path(empty)), "")
 
 
 class TestBlock(unittest.TestCase):
     def test_block_is_empty_when_nothing_detected(self):
         # notes() 全空时不能吐出一个只有标题的空壳块
         orig = environ.notes
-        environ.notes = lambda home=None: []
+        environ.notes = lambda home=None, extra=None: []
         try:
             self.assertEqual(environ.block(), "")
         finally:
@@ -77,7 +93,7 @@ class TestBlock(unittest.TestCase):
     def test_block_mentions_the_upstream_issue(self):
         tmp = _fake_home([REAL_LINE])
         try:
-            text = environ.block(Path(tmp.name))
+            text = _block_with_agy(tmp)
             self.assertIn("agy", text)
             self.assertIn("issues/638", text)
             # 关键：必须说清「坏的只是 agy 内置的，不是浏览器取证这条路」，
@@ -94,7 +110,7 @@ class TestBlock(unittest.TestCase):
         """
         tmp = _fake_home([REAL_LINE])
         try:
-            text = environ.block(Path(tmp.name))
+            text = _block_with_agy(tmp)
         finally:
             tmp.cleanup()
         for leak in ("game.js", "three", "bloom", "tier", "里程", "星空",

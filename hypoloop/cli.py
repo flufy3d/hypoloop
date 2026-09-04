@@ -1,7 +1,8 @@
 """hypoloop 的命令行入口。
 
     hypoloop "让游戏画面更好更精致一些"      # 在目标项目目录里直接跑
-    hypoloop quota                            # 只看 agy 额度
+    hypoloop backends                         # 看本机装了哪几家 CLI
+    hypoloop quota                            # 看额度
     hypoloop history                          # 看历史账
 """
 
@@ -12,12 +13,13 @@ import io
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
-from . import __version__, config
-from .agy import AgyNotFound
+from . import __version__, backends, config
+from .backends import CliNotFound
 from .ledger import history
 from .loop import LoopError, load_manifest, run
-from .quota import format_quota, probe
+from .quota import format_quota
 
 EPILOG = """\
 例子：
@@ -25,11 +27,16 @@ EPILOG = """\
   hypoloop "让游戏画面更好更精致一些" --rounds 2 --commit
   hypoloop "找出并修掉首屏白屏的根因" --evidence-hint "用无头浏览器截图对比首屏"
   hypoloop "把必死组合修掉" --rounds 5 --until "全速度段必死率为 0 且难度常数未改动"
+  hypoloop "同一个任务换一家跑" --backend codex
   hypoloop --resume ~/.hypoloop/runs/20260903-174503-xxx -   # 验证者超时后续跑
+  hypoloop backends
   hypoloop quota
 
 三个角色：假设者提出可证伪的假设 → 质疑者攻击它们 → 验证者动手实测。
 **只有验证者能改文件**，这一条由工作区指纹强制，不是靠提示词请求。
+
+hypoloop 自己不调模型，它调本机装着的 CLI agent。装了哪几家用 `hypoloop backends`
+看；不指定 --backend 就用装了的第一家，并在开跑时说清楚用的是谁。
 """
 
 
@@ -50,17 +57,22 @@ def _stdout_utf8() -> None:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="hypoloop",
-        description="假设者 / 质疑者 / 验证者 —— 三角色实证循环，跑在 agy 上。",
+        description="假设者 / 质疑者 / 验证者 —— 三角色实证循环，"
+                    "跑在你本机装着的 CLI agent 上。",
         epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("task", nargs="?",
                    help="要交给这套系统的任务，一句话说清就行。"
                         "配合 --resume 时可以写 - ，表示沿用上次的任务描述。")
     p.add_argument("-C", "--target", default=".", help="目标项目目录（默认当前目录）")
+    p.add_argument("--backend", choices=backends.names(),
+                   help="用哪家 CLI agent 跑（默认：本机装了的第一家）。"
+                        "`hypoloop backends` 看本机情况。")
     p.add_argument("--rounds", type=int, help="跑几轮（默认 2）")
     p.add_argument("--hypotheses", type=int, help="每轮提几条假设（默认 3）")
-    p.add_argument("--model", help="假设者/质疑者用的模型")
-    p.add_argument("--verifier-model", dest="verifier_model", help="验证者用的模型")
+    p.add_argument("--model", help="假设者/质疑者用的模型（默认用后端自己的中档）")
+    p.add_argument("--verifier-model", dest="verifier_model",
+                   help="验证者用的模型（默认用后端自己的高档）")
     p.add_argument("--evidence-hint", dest="evidence_hint",
                    help="给验证者的取证建议，比如「用无头浏览器截图对比」。"
                         "不填它自己看着办。")
@@ -86,15 +98,38 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def cmd_quota() -> int:
-    q = probe()
-    print(format_quota(q, "agy 额度"))
-    if not q.available:
-        print("\n（额度是从 `agy -v=3 models` 打进 "
-              "~/.gemini/antigravity-cli/log/ 的 HTTP 响应体里读的。"
-              "agy 升级后这个未公开的 glog 标志可能失效。）")
+def cmd_backends() -> int:
+    """本机装了哪几家。**一家都不强制依赖，装了哪家就能用哪家。**"""
+    found = backends.installed()
+    default = found[0].name if found else None
+    print("{0:<8}{1:<26}{2:<10}{3}".format("名字", "是什么", "装了没", "默认模型"))
+    for b in backends.all_backends():
+        ok = b.installed()
+        print("{0:<8}{1:<26}{2:<10}{3}".format(
+            b.name + ("*" if b.name == default else ""),
+            b.label, "是" if ok else "—",
+            "{0} / {1}".format(b.default_model, b.default_verifier_model)))
+    if not found:
+        print("\n一家都没找到。hypoloop 自己不调模型，至少得装一个上面列的 CLI。")
         return 1
+    print("\n带 * 的是不指定 --backend 时会用的那家。")
     return 0
+
+
+def cmd_quota(name: Optional[str] = None) -> int:
+    """报额度。不指定就把装了的几家全报一遍 —— 换着用的时候这个最有用。"""
+    targets = [backends.get(name)] if name else backends.installed()
+    if not targets:
+        print("本机没找到任何 CLI agent，无从谈额度。跑 `hypoloop backends` 看看。")
+        return 1
+    any_ok = False
+    for i, b in enumerate(targets):
+        if i:
+            print("")
+        q = b.quota()
+        any_ok = any_ok or q.available
+        print(format_quota(q, "{0} 额度".format(b.name)))
+    return 0 if any_ok else 1
 
 
 def cmd_history() -> int:
@@ -117,8 +152,12 @@ def main(argv=None) -> int:
     _stdout_utf8()
     args = build_parser().parse_args(argv)
 
-    if args.task in ("quota", "history") and args.target == ".":
-        return cmd_quota() if args.task == "quota" else cmd_history()
+    if args.task in ("quota", "history", "backends") and args.target == ".":
+        if args.task == "backends":
+            return cmd_backends()
+        if args.task == "quota":
+            return cmd_quota(args.backend)
+        return cmd_history()
     if not args.task:
         build_parser().print_help()
         return 2
@@ -131,6 +170,7 @@ def main(argv=None) -> int:
 
     target = Path(args.target).resolve()
     overrides = {
+        "backend": args.backend,
         "rounds": args.rounds,
         "hypotheses": args.hypotheses,
         "model": args.model,
@@ -139,17 +179,32 @@ def main(argv=None) -> int:
         "stop_when": args.stop_when,
     }
     manifest_cfg = manifest.get("config") if isinstance(manifest.get("config"), dict) else None
-    cfg = config.load(target, overrides, base=manifest_cfg)
+    # 后端要先定下来，项目配置里「哪家用哪个模型」那一层才知道该叠哪一段。
+    try:
+        backend = backends.choose(
+            args.backend or (manifest_cfg or {}).get("backend")
+            or config.load(target).get("backend"))
+    except CliNotFound as e:
+        print(e, file=sys.stderr)
+        return 3
+    cfg = config.load(target, overrides, base=manifest_cfg, backend=backend.name)
     if args.save_config:
         path = config.save_project(
-            target, {k: v for k, v in overrides.items() if v is not None})
+            target, {k: v for k, v in overrides.items() if v is not None},
+            backend=backend.name)
         print("这个项目的默认配置已存到 {0}".format(path))
+    if not args.backend and not args.dry_run:
+        others = [b.name for b in backends.installed() if b.name != backend.name]
+        if others:
+            print("本机还装了 {0}；这次用的是 {1}（--backend 可以换）。".format(
+                "、".join(others), backend.name))
 
     try:
-        run(task, target, cfg, dry_run=args.dry_run, commit=args.commit,
-            allow_dirty=args.allow_dirty, resume_dir=resume_dir)
-    except AgyNotFound as e:
-        print("找不到 agy：{0}".format(e), file=sys.stderr)
+        run(task, target, cfg, backend=backend, dry_run=args.dry_run,
+            commit=args.commit, allow_dirty=args.allow_dirty,
+            resume_dir=resume_dir)
+    except CliNotFound as e:
+        print("找不到 {0}：{1}".format(backend.name, e), file=sys.stderr)
         return 3
     except LoopError as e:
         print("跑不下去了：{0}".format(e), file=sys.stderr)

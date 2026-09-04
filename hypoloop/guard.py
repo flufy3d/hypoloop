@@ -3,9 +3,10 @@
 提示词里写「你不许改文件」是一句请求，不是一个保证。这里给的是保证：假设者和质疑者
 跑之前给工作区拍一个指纹，跑完再拍一次，不一样就中止整轮并如实报出改了什么。
 
-双保险的另一半在调用侧：这两个角色跑在 agy 的 `--mode plan`。实测 plan 模式只往
-~/.gemini/antigravity-cli/brain/<conv-id>/ 写它自己的产物，不碰工作区。但那是 agy 的
-实现细节，会变；指纹是我们自己的，不会变。
+双保险的另一半在调用侧：这两个角色跑在各家后端自己的只读档（agy `--mode plan`、
+codex `-s read-only`、claude `--permission-mode plan`）。三家都实测挡得住写。但那是
+**它们的**实现细节，会变，而且新接一家后端时谁也不知道那家的只读到底有多硬；
+指纹是我们自己的，对谁都一样成立。
 
 指纹要覆盖**内容**而不只是文件名：`git status --porcelain` 只列出未跟踪文件的路径，
 一个未跟踪文件的内容被改了它一个字都不会变。所以未跟踪文件的内容也要单独哈希。
@@ -128,7 +129,7 @@ class ReadOnlyGuard:
     """with 块里的代码不许改工作区，改了就抛 WorktreeChanged。
 
         with ReadOnlyGuard(root, "假设者"):
-            run_agy(...)
+            backend.run(...)
     """
 
     def __init__(self, root: Path, who: str, enabled: bool = True) -> None:

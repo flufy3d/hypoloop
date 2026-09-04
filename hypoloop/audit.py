@@ -8,7 +8,7 @@ agy 返回 `status: ERROR` + "The stream was interrupted."，但 `returncode` �
 `structured_output` 完整、连收尾总结都写完了；hypoloop 把整份产出丢掉，判这一轮
 中止，还在目标仓库的提交信息里写下一句假话。
 
-`AgyCall.degraded` 修掉了**那一个**判断。但同样的错误还能从别的地方再犯一次：
+`Call.degraded` 修掉了**那一个**判断。但同样的错误还能从别的地方再犯一次：
 以后谁在 `_step` 里加个提前 return、谁改了 schema 名导致产出落到别的文件名下、
 谁在异常路径上漏了一次写盘 —— 都会重演「真实工作被静默丢弃」。
 
@@ -27,7 +27,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .agy import AgyCall
+from .backends.base import Call
 
 RAW_SUFFIX = ".raw.json"
 
@@ -42,7 +42,7 @@ def _load(path: Path) -> Dict[str, Any]:
 
 
 def dropped_payloads(run_dir: Path) -> List[Dict[str, str]]:
-    """列出「agy 给了完整产出、hypoloop 却没采纳」的步骤。
+    """列出「后端给了完整产出、hypoloop 却没采纳」的步骤。
 
     判据只有磁盘上的两个文件，不碰任何业务逻辑：
       <stem>.raw.json 里有可用的 structured_output，而 <stem>.json 不存在。
@@ -55,7 +55,7 @@ def dropped_payloads(run_dir: Path) -> List[Dict[str, str]]:
         stem = raw.name[: -len(RAW_SUFFIX)]
         if (run_dir / (stem + ".json")).exists():
             continue                      # 采纳了，正常
-        call = AgyCall(_load(raw))
+        call = Call(_load(raw))
         if not call.usable:
             continue                      # 真的没产出，不算丢
         out.append({
@@ -74,14 +74,14 @@ def render(run_dir: Path) -> str:
     if not rows:
         return ""
     lines = [
-        "!! 自查发现 {0} 步的产出被丢掉了 —— agy 给了完整结果，hypoloop 没采纳。".format(
+        "!! 自查发现 {0} 步的产出被丢掉了 —— 后端给了完整结果，hypoloop 没采纳。".format(
             len(rows)),
-        "   这是一个 bug，不是 agy 的问题。产出还在磁盘上，别让它白跑：",
+        "   这是 hypoloop 的 bug，不是后端的问题。产出还在磁盘上，别让它白跑：",
     ]
     for r in rows:
         lines.append("     {0}（status={1}，{2} tokens）→ {3}".format(
             r["step"], r["status"], r["tokens"], r["file"]))
         if r["error"]:
-            lines.append("       agy 的原话：" + r["error"])
+            lines.append("       后端的原话：" + r["error"])
     lines.append("   用 `hypoloop --resume <运行目录> -` 可以在不重跑的前提下接着走。")
     return "\n".join(lines)
