@@ -73,7 +73,68 @@ def _deep_merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
 
 
 #: 这些键的取值只对某一家后端有意义（模型名尤其如此），所以在项目配置里按后端分开存。
-PER_BACKEND_KEYS = ("model", "verifier_model")
+ROLES = ("hypothesizer", "challenger", "verifier")
+ROLE_LABELS = dict(zip(ROLES, ("假设者", "质疑者", "验证者")))
+PER_BACKEND_KEYS = ("model",) + tuple(r + "_model" for r in ROLES)
+
+
+def _mapping(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _read_project(root: Path) -> Dict[str, Any]:
+    try:
+        return _mapping(json.loads(project_config_path(root).read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return {}
+
+
+def _role_pair(layer: Dict[str, Any], role: str) -> Dict[str, Any]:
+    return _mapping(_mapping(layer.get("roles")).get(role))
+
+
+def resolve_roles(saved: Dict[str, Any], base: Dict[str, Any],
+                  overrides: Dict[str, Any], backend: str) -> Dict[str, Any]:
+    """Resolve by source first, specificity second; models remain bound to a backend.
+
+    A higher-source shared backend/model beats a lower-source role setting.
+    Within a source an explicit role setting wins. Project model buckets are
+    selected using the final backend, before manifest and CLI are applied.
+    """
+    from . import backends
+    layers = [saved, base, overrides]
+    global_names = []
+    global_name = backend
+    for layer in layers:
+        global_name = layer.get("backend") or global_name
+        global_names.append(global_name)
+    result = {}
+    for role in ROLES:
+        name = backend
+        names = []
+        for layer in layers:
+            pair = _role_pair(layer, role)
+            name = (layer.get(role + "_backend") or pair.get("backend")
+                    or layer.get("backend") or name)
+            names.append(name)
+        model = ""
+        for index, layer in enumerate(layers):
+            pair = _role_pair(layer, role)
+            explicit = layer.get(role + "_model") or pair.get("model")
+            shared = layer.get("model") if role != "verifier" else None
+            if explicit and names[index] == name:
+                model = explicit
+            elif shared and global_names[index] == name:
+                model = shared
+            if index == 0:
+                bucket = _mapping(_mapping(saved.get("backends")).get(name))
+                model = (bucket.get(role + "_model")
+                         or (bucket.get("model") if role != "verifier" else None)
+                         or model)
+        b = backends.get(name)
+        result[role] = dict(backend=name, model=model or (
+            b.default_verifier_model if role == "verifier" else b.default_model))
+    return result
 
 
 def load(root: Path, overrides: Optional[Dict[str, Any]] = None,
@@ -88,33 +149,45 @@ def load(root: Path, overrides: Optional[Dict[str, Any]] = None,
     同一个项目时再把它递过去，就是拿 gemini 的模型名去问 codex —— 所以按后端分开存。
     """
     cfg = dict(DEFAULTS)
-    path = project_config_path(root)
-    if path.exists():
-        try:
-            saved = json.loads(path.read_text(encoding="utf-8"))
-            cfg = _deep_merge(cfg, saved)
-            per = (saved.get("backends") or {}).get(backend) if backend else None
-            if isinstance(per, dict):
-                cfg = _deep_merge(cfg, per)
-        except (OSError, ValueError):
-            pass    # 配置坏了就用默认值跑，别因为一个配置文件把任务卡死
+    saved = _read_project(root)
+    cfg = _deep_merge(cfg, saved)
+    per = _mapping(saved.get("backends")).get(backend) if backend else None
+    if isinstance(per, dict):
+        cfg = _deep_merge(cfg, per)
     if base:
         cfg = _deep_merge(cfg, base)
     clean = {k: v for k, v in (overrides or {}).items() if v is not None}
-    return _deep_merge(cfg, clean)
+    cfg = _deep_merge(cfg, clean)
+    if backend:
+        cfg["roles"] = resolve_roles(saved, _mapping(base), clean, backend)
+        cfg["role_mode"] = any(
+            layer.get("role_mode") or any(layer.get(r + suffix) for r in ROLES
+                                          for suffix in ("_backend", "_model")
+                                          if r + suffix != "verifier_model")
+            for layer in (saved, _mapping(base), clean))
+        for role, pair in cfg["roles"].items():
+            cfg[role + "_backend"] = pair["backend"]
+            cfg[role + "_model"] = pair["model"]
+    return cfg
 
 
 def save_project(root: Path, patch: Dict[str, Any],
                  backend: str = "") -> Path:
     ensure_dirs()
     path = project_config_path(root)
-    current: Dict[str, Any] = {}
-    if path.exists():
-        try:
-            current = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            current = {}
+    current = _read_project(root)
     patch = dict(patch)
+    roles = _mapping(patch.pop("roles", None))
+    for role in ROLES:
+        pair = _mapping(roles.get(role))
+        name = pair.get("backend") or patch.get(role + "_backend")
+        if name:
+            patch[role + "_backend"] = name
+            model = pair.get("model") or patch.pop(role + "_model", None)
+            if model:
+                current = _deep_merge(current, {
+                    "backends": {name: {role + "_model": model}}})
+                patch.pop(role + "_model", None)
     if backend:
         per = {k: patch.pop(k) for k in PER_BACKEND_KEYS if k in patch}
         if per:

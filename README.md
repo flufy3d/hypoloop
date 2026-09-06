@@ -91,6 +91,8 @@ hypoloop backends / quota / history
 | `--backend {agy,codex,claude}` | Which CLI to use. **Defaults to the first one installed, and says so at startup** |
 | `--rounds N` / `--hypotheses N` | Rounds (default 2) / hypotheses per round (default 3) |
 | `--model` / `--verifier-model` | Override per role; empty means the backend's own mid/high tier |
+| `--{hypothesizer,challenger,verifier}-backend` | Give a role its own CLI (see §9). Omit to share the `--backend` one |
+| `--hypothesizer-model` / `--challenger-model` | Per-role model override (the verifier keeps `--verifier-model`) |
 | `--evidence-hint` | Advice for the verifier. **Empty by default, and usually should stay empty** (see below) |
 | `--until "<condition>"` | Stop early once met (see below) |
 | `--commit` | Whole run collapses into **one** commit on a `hypoloop/<run>` branch |
@@ -279,6 +281,37 @@ or `evidence` is empty (and it says explicitly that the missing evidence is why)
 `goal` being optional is the foundation of that safety, which is why it survived codex's
 strict schema as "required but nullable" — `null` maps one-to-one onto the old "missing,"
 and the reader is unchanged (§4).
+
+### 9. A role can run on a different CLI than the others
+
+The three roles don't have to share a backend. The verifier is ~70% of a round's tokens
+(369k of 523k in one real run), and quota lives **per CLI** — "everyone on one CLI" burns
+your scarcest quota on steps that don't need it:
+
+```bash
+hypoloop "task" --backend agy \
+  --verifier-backend codex --verifier-model gpt-6-astra:high
+```
+
+Read roles stay on agy flash; only the verifier's writes are billed to codex. Mixing
+families also decorrelates blind spots: a challenger from a different model family
+attacks premises its own family would share.
+
+Resolution is per role: per-role flag > the shared `--backend` default, with each role's
+model falling back to the backend it actually landed on (a gemini model name is never
+handed to codex). `--resume` never re-resolves: every cached step output carries a
+sha256-bound provenance record (`<stem>.source.json`), and resume reads **that**, not
+your current flags — so a half-finished run finishes on the same CLIs it started on.
+
+Two accounting consequences:
+
+- Quota before/after is probed per **(backend, model) pair actually used**, and
+  percentage points are never summed across models — different CLIs' windows don't add.
+- The ledger and report attribute every call to its role + backend + model, so "which
+  CLI ate this run" is one glance away.
+
+`guard.py` is untouched by all of this: the fingerprint was already per-step and
+backend-agnostic — which is exactly why mixing CLIs is safe to begin with.
 
 ## Where things land
 

@@ -71,6 +71,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rounds", type=int, help="跑几轮（默认 2）")
     p.add_argument("--hypotheses", type=int, help="每轮提几条假设（默认 3）")
     p.add_argument("--model", help="假设者/质疑者用的模型（默认用后端自己的中档）")
+    for role in config.ROLES:
+        p.add_argument("--" + role + "-backend", choices=backends.names(),
+                       help=config.ROLE_LABELS[role] + "独立使用的 CLI 后端")
+        if role != "verifier":
+            p.add_argument("--" + role + "-model",
+                           help=config.ROLE_LABELS[role] + "独立使用的模型")
     p.add_argument("--verifier-model", dest="verifier_model",
                    help="验证者用的模型（默认用后端自己的高档）")
     p.add_argument("--evidence-hint", dest="evidence_hint",
@@ -179,6 +185,10 @@ def main(argv=None) -> int:
         "stop_when": args.stop_when,
     }
     manifest_cfg = manifest.get("config") if isinstance(manifest.get("config"), dict) else None
+    for role in config.ROLES:
+        for suffix in ("_backend", "_model"):
+            key = role + suffix
+            overrides[key] = getattr(args, key)
     # 后端要先定下来，项目配置里「哪家用哪个模型」那一层才知道该叠哪一段。
     try:
         backend = backends.choose(
@@ -189,8 +199,11 @@ def main(argv=None) -> int:
         return 3
     cfg = config.load(target, overrides, base=manifest_cfg, backend=backend.name)
     if args.save_config:
+        patch = {k: v for k, v in overrides.items() if v is not None}
+        if cfg.get("role_mode"):
+            patch.update(roles=cfg["roles"], role_mode=True)
         path = config.save_project(
-            target, {k: v for k, v in overrides.items() if v is not None},
+            target, patch,
             backend=backend.name)
         print("这个项目的默认配置已存到 {0}".format(path))
     if not args.backend and not args.dry_run:
@@ -204,7 +217,7 @@ def main(argv=None) -> int:
             commit=args.commit, allow_dirty=args.allow_dirty,
             resume_dir=resume_dir)
     except CliNotFound as e:
-        print("找不到 {0}：{1}".format(backend.name, e), file=sys.stderr)
+        print("找不到 CLI：{0}".format(e), file=sys.stderr)
         return 3
     except LoopError as e:
         print("跑不下去了：{0}".format(e), file=sys.stderr)

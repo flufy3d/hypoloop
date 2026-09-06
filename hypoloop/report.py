@@ -107,7 +107,8 @@ def write_report(run_dir: Path, *, task: str, target: Path,
                  quota_before: Any, quota_after: Any,
                  consumed: Dict[str, Optional[float]],
                  git_summary: Optional[str] = None,
-                 backend: Optional[str] = None) -> Path:
+                 backend: Optional[str] = None,
+                 steps: Optional[List[Dict[str, Any]]] = None) -> Path:
     lines = [
         "# hypoloop 运行报告",
         "",
@@ -137,6 +138,17 @@ def write_report(run_dir: Path, *, task: str, target: Path,
             if consumed.get("weekly") is not None else "读不到"),
     ]
     lines += deltas + ["", "```", ledger_text, "```", ""]
+
+    # Legacy fresh single-backend reports retain their original layout.
+    if any(s.get("reused") for s in steps or []):
+        lines += ["## 产出来源", ""]
+        for s in steps or []:
+            assigned, source = s["assigned"], s.get("source") or {}
+            origin = "{backend}/{model}".format(**source) if source else "来源未记录"
+            lines.append("- 第 {0} 轮 {1}：{2}；产出 {3}；当前指派 {4}/{5}".format(
+                s["round"], s["role"], "复用" if s["reused"] else "本次生成",
+                origin, assigned["backend"], assigned["model"]))
+        lines.append("")
 
     for r in rounds:
         lines += ["---", "", "## 第 {0} 轮".format(r.get("round")), ""]

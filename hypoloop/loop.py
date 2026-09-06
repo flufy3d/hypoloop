@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -13,10 +14,10 @@ from typing import Any, Callable, Dict, List, Optional
 
 from . import audit, config, report
 from .backends import (MODE_LABEL, MODE_READONLY, MODE_WRITE, Backend, Call,
-                       choose)
+                       choose, get, CliNotFound)
 from .guard import ReadOnlyGuard, WorktreeChanged, is_git_repo, run_git
 from .ledger import Ledger
-from .quota import consumed, format_quota
+from .quota import consumed, format_quota, unavailable
 from .roles import challenger, hypothesizer, verifier
 
 
@@ -26,6 +27,24 @@ class LoopError(RuntimeError):
 
 # 续接抢救只是把结论要回来，不该再干活，所以给个短超时。
 SALVAGE_TIMEOUT_SEC = 420
+
+
+def _source_path(cached: Path) -> Path:
+    return cached.with_suffix(".source.json")
+
+
+def _cached_source(cached: Path) -> Dict[str, Any]:
+    """Only trust provenance bound to the exact cached output, never current cfg."""
+    try:
+        source = json.loads(_source_path(cached).read_text(encoding="utf-8"))
+        if (isinstance(source, dict)
+                and source.get("sha256") == hashlib.sha256(cached.read_bytes()).hexdigest()
+                and isinstance(source.get("backend"), str)
+                and isinstance(source.get("model"), str)):
+            return {k: source[k] for k in ("backend", "model")}
+    except (OSError, ValueError):
+        pass
+    return {}
 
 # 取证过程留下的东西，绝不能跟着源码改动一起提交进目标仓库。验证者被要求自己清理，
 # 但那是提示词里的一句请求；这里是机制：提交前把它们挑出来，只 add 正当的源码改动，
@@ -100,8 +119,35 @@ def _dirty(root: Path) -> str:
     return out.strip() if code == 0 else ""
 
 
+def _bindings(cfg: Dict[str, Any], backend: Backend,
+              role_backends: Optional[Dict[str, Backend]] = None):
+    """Normalize direct Python callers too; retain the old backend= injection."""
+    cfg = dict(cfg)
+    pairs = cfg.get("roles") or {}
+    instances = {}
+    resolved = {}
+    for role in config.ROLES:
+        pair = pairs.get(role) or {}
+        name = pair.get("backend") or cfg.get(role + "_backend") or backend.name
+        b = (role_backends or {}).get(role)
+        b = b or (backend if name == backend.name else get(name))
+        model = pair.get("model") or cfg.get(role + "_model")
+        if not model and b.name == backend.name and role != "verifier":
+            model = cfg.get("model")
+        resolved[role] = dict(backend=b.name, model=model or (
+            b.default_verifier_model if role == "verifier" else b.default_model))
+        instances[role] = b
+    cfg["roles"] = resolved
+    if "role_mode" not in cfg:
+        cfg["role_mode"] = bool(pairs or role_backends or any(
+            cfg.get(r + "_backend") or (r != "verifier" and cfg.get(r + "_model"))
+            for r in config.ROLES))
+    return cfg, instances
+
+
 def run(task: str, target: Path, cfg: Dict[str, Any], *,
         backend: Optional[Backend] = None,
+        role_backends: Optional[Dict[str, Backend]] = None,
         dry_run: bool = False, commit: bool = False, allow_dirty: bool = False,
         resume_dir: Optional[Path] = None,
         log: Callable[[str], None] = _default_log) -> Dict[str, Any]:
@@ -112,6 +158,7 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
     纯浪费，而且会把上一轮那份已经很扎实的质疑意见丢掉）。
     """
     backend = backend or choose(cfg.get("backend"))
+    cfg, role_backends = _bindings(cfg, backend, role_backends)
     # 模型名留空就用这家后端自己的默认档位。这件事不能靠 DEFAULTS 里写死一个名字 ——
     # 那个名字只对一家成立，换一家就是把 gemini 的模型名递给 codex。
     cfg = dict(cfg)
@@ -141,18 +188,34 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
     if not run_dir.is_dir():
         raise LoopError("要续跑的运行目录不存在：{0}".format(run_dir))
     _write_manifest(run_dir, task, target, cfg)
-    ledger = Ledger()
+    detailed = bool(cfg.get("role_mode"))
+    ledger = Ledger(detailed=detailed)
+    steps: List[Dict[str, Any]] = []
     rounds: List[Dict[str, Any]] = []
 
     log("运行目录：{0}{1}".format(run_dir, "（续跑）" if resuming else ""))
     log("目标项目：{0}{1}".format(target, "" if git else "（非 git）"))
-    log("后端：{0}（{1}）　假设者/质疑者 {2}　验证者 {3}".format(
-        backend.name, backend.label, cfg["model"], cfg["verifier_model"]))
+    if detailed:
+        for role, pair in cfg["roles"].items():
+            log("{0}：{1}/{2}".format(config.ROLE_LABELS[role], pair["backend"], pair["model"]))
+    else:
+        log("后端：{0}（{1}）　假设者/质疑者 {2}　验证者 {3}".format(
+            backend.name, backend.label, cfg["model"], cfg["verifier_model"]))
     log("")
 
-    quota_before = backend.quota(cfg["model"])
-    log(format_quota(quota_before, "开跑前额度"))
+    quota_before = unavailable("本次没有调用") if detailed else backend.quota(cfg["model"])
+    if not detailed:
+        log(format_quota(quota_before, "开跑前额度"))
     log("")
+
+    used = {}
+
+    def before_call(b: Backend, model: str) -> None:
+        key = (b.name, model)
+        if detailed and key not in used:
+            q = b.quota(model)
+            used[key] = (b, q)
+            log(format_quota(q, "{0}/{1} 开跑前额度".format(*key)))
 
     branch = None
     if commit and git:
@@ -168,11 +231,13 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
             log("")
 
     total_rounds = int(cfg["rounds"])
+    pending_error = None
     try:
         for i in range(1, total_rounds + 1):
             rounds.append(_one_round(
                 i, total_rounds, task, target, cfg, rounds, run_dir, ledger,
-                backend=backend, dry_run=dry_run, resume=resuming, log=log))
+                backend=backend, dry_run=dry_run, resume=resuming, log=log,
+                steps=steps, role_backends=role_backends, before_call=before_call))
             if not dry_run and _goal_met(cfg, rounds[-1], log):
                 skipped = total_rounds - i
                 if skipped > 0:
@@ -186,6 +251,10 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
         log("")
         log("!! {0}".format(e))
         rounds.append({"round": len(rounds) + 1, "error": str(e)})
+    except (CliNotFound, KeyboardInterrupt, OSError) as e:
+        pending_error = e
+        log("!! {0}".format(e))
+        rounds.append({"round": len(rounds) + 1, "error": str(e) or type(e).__name__})
 
     # 自查：有没有哪一步后端给了完整产出、我们却没采纳。放在提交之前 —— 万一真丢了
     # 东西，人得在那句「已提交」之前先看到，而不是事后从日志里翻。详见 audit.py。
@@ -201,8 +270,16 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
         _commit_run(target, task, rounds, log)
 
     log("")
-    quota_after = backend.quota(cfg["model"])
-    log(format_quota(quota_after, "跑完后额度"))
+    quota_after = unavailable("逐后端列出") if detailed else backend.quota(cfg["model"])
+    quotas = [] if detailed else None
+    for (name, model), (b, before) in used.items():
+        after = b.quota(model)
+        delta = consumed(before, after)
+        quotas.append(dict(backend=name, model=model, before=before, after=after, consumed=delta))
+        log(format_quota(after, "{0}/{1} 跑完后额度".format(name, model)))
+        log("  窗口消耗（百分点，不跨模型相加）：{0}".format(delta))
+    if not detailed:
+        log(format_quota(quota_after, "跑完后额度"))
     spent = consumed(quota_before, quota_after)
     for key, label in (("five_hour", "5 小时窗口"), ("weekly", "周窗口")):
         if spent.get(key) is not None:
@@ -217,29 +294,44 @@ def run(task: str, target: Path, cfg: Dict[str, Any], *,
         git_summary = "git status --porcelain:\n{0}\ngit log -5:\n{1}".format(
             status.strip() or "（干净）", logs.strip())
 
+    ledger.record(task=task, target=str(target), run_dir=str(run_dir),
+                  quota_before=dict(quota_before), quota_after=dict(quota_after),
+                  consumed=spent, quotas=quotas)
     report_path = report.write_report(
         run_dir, task=task, target=target, rounds=rounds,
         ledger_text=ledger.render(), quota_before=quota_before,
         quota_after=quota_after, consumed=spent, git_summary=git_summary,
+        steps=steps, assignments=cfg["roles"] if detailed else None, quotas=quotas,
         backend="{0}（{1} / {2}）".format(
             backend.name, cfg["model"], cfg["verifier_model"]))
-    ledger.record(task=task, target=str(target), run_dir=str(run_dir),
-                  quota_before=dict(quota_before), quota_after=dict(quota_after),
-                  consumed=spent)
 
     log("")
     log("报告：{0}".format(report_path))
+    if pending_error is not None:
+        raise pending_error
     return {
         "run_dir": run_dir, "report": report_path, "rounds": rounds,
         "ledger": ledger, "quota_before": quota_before, "backend": backend,
         "quota_after": quota_after, "consumed": spent, "branch": branch,
+        "quotas": quotas, "steps": steps,
     }
 
 
 def _one_round(i: int, total: int, task: str, target: Path, cfg: Dict[str, Any],
                history: List[Dict[str, Any]], run_dir: Path, ledger: Ledger,
                *, backend: Backend, dry_run: bool, resume: bool = False,
-               log: Callable[[str], None]) -> Dict[str, Any]:
+               log: Callable[[str], None],
+               steps: Optional[List[Dict[str, Any]]] = None,
+               role_backends: Optional[Dict[str, Backend]] = None,
+               before_call: Optional[Callable[[Backend, str], None]] = None) -> Dict[str, Any]:
+    cfg, bindings = _bindings(cfg, backend, role_backends)
+    h, c, v = (bindings[r] for r in config.ROLES)
+    hm, cm, vm = (cfg["roles"][r]["model"] for r in config.ROLES)
+    try:
+        notes = v.env_notes()
+    except Exception:  # Environment probing is advisory, as in verifier._backend_notes.
+        notes = []
+    verifier_cfg = dict(cfg, backend=v.name, _verifier_env_notes=notes)
     out: Dict[str, Any] = {"round": i}
     log("=" * 60)
     log("第 {0}/{1} 轮".format(i, total))
@@ -248,23 +340,23 @@ def _one_round(i: int, total: int, task: str, target: Path, cfg: Dict[str, Any],
     # ---- 假设者（只读）----
     prompt = hypothesizer.build_prompt(task, target, cfg, history)
     out["hypothesize"] = _step(
-        "假设者", prompt, target, cfg, run_dir, ledger, i, backend,
-        model=cfg["model"], mode=MODE_READONLY, schema_name="hypotheses",
+        "假设者", prompt, target, cfg, run_dir, ledger, i, h,
+        model=hm, mode=MODE_READONLY, schema_name="hypotheses",
         timeout=cfg["readonly_timeout_sec"], readonly=True,
-        dry_run=dry_run, resume=resume, log=log)
+        dry_run=dry_run, resume=resume, log=log, steps=steps, before_call=before_call)
     if dry_run:
         out["challenge"] = _step(
             "质疑者", challenger.build_prompt(task, target, cfg, {}, history),
-            target, cfg, run_dir, ledger, i, backend, model=cfg["model"],
+            target, cfg, run_dir, ledger, i, c, model=cm,
             mode=MODE_READONLY, schema_name="critique",
             timeout=cfg["readonly_timeout_sec"], readonly=True,
-            dry_run=True, log=log)
+            dry_run=True, resume=resume, log=log, steps=steps, before_call=before_call)
         out["verify"] = _step(
-            "验证者", verifier.build_prompt(task, target, cfg, {}, {}, history),
-            target, cfg, run_dir, ledger, i, backend, model=cfg["verifier_model"],
+            "验证者", verifier.build_prompt(task, target, verifier_cfg, {}, {}, history),
+            target, cfg, run_dir, ledger, i, v, model=vm,
             mode=MODE_WRITE, schema_name="verification",
             timeout=cfg["verifier_timeout_sec"], readonly=False,
-            dry_run=True, log=log)
+            dry_run=True, resume=resume, log=log, steps=steps, before_call=before_call)
         return out
 
     n = len(out["hypothesize"].get("hypotheses") or [])
@@ -275,10 +367,10 @@ def _one_round(i: int, total: int, task: str, target: Path, cfg: Dict[str, Any],
     # ---- 质疑者（只读）----
     prompt = challenger.build_prompt(task, target, cfg, out["hypothesize"], history)
     out["challenge"] = _step(
-        "质疑者", prompt, target, cfg, run_dir, ledger, i, backend,
-        model=cfg["model"], mode=MODE_READONLY, schema_name="critique",
+        "质疑者", prompt, target, cfg, run_dir, ledger, i, c,
+        model=cm, mode=MODE_READONLY, schema_name="critique",
         timeout=cfg["readonly_timeout_sec"], readonly=True,
-        dry_run=False, resume=resume, log=log)
+        dry_run=False, resume=resume, log=log, steps=steps, before_call=before_call)
     crits = out["challenge"].get("critiques") or []
     rejected = sum(1 for c in crits if c.get("verdict") == "reject")
     revised = sum(1 for c in crits if c.get("verdict") == "revise")
@@ -288,12 +380,12 @@ def _one_round(i: int, total: int, task: str, target: Path, cfg: Dict[str, Any],
 
     # ---- 验证者（唯一能写）----
     prompt = verifier.build_prompt(
-        task, target, cfg, out["hypothesize"], out["challenge"], history)
+        task, target, verifier_cfg, out["hypothesize"], out["challenge"], history)
     out["verify"] = _step(
-        "验证者", prompt, target, cfg, run_dir, ledger, i, backend,
-        model=cfg["verifier_model"], mode=MODE_WRITE, schema_name="verification",
+        "验证者", prompt, target, cfg, run_dir, ledger, i, v,
+        model=vm, mode=MODE_WRITE, schema_name="verification",
         timeout=cfg["verifier_timeout_sec"], readonly=False,
-        dry_run=False, resume=resume, log=log)
+        dry_run=False, resume=resume, log=log, steps=steps, before_call=before_call)
     ev = out["verify"].get("evidence") or []
     tally = {k: sum(1 for e in ev if e.get("verdict") == k)
              for k in ("supported", "refuted", "inconclusive")}
@@ -378,12 +470,26 @@ def _step(role: str, prompt: str, target: Path, cfg: Dict[str, Any],
           run_dir: Path, ledger: Ledger, round_no: int, backend: Backend,
           *, model: str, mode: str,
           schema_name: str, timeout: int, readonly: bool, dry_run: bool,
-          log: Callable[[str], None], resume: bool = False) -> Dict[str, Any]:
+          log: Callable[[str], None], resume: bool = False,
+          steps: Optional[List[Dict[str, Any]]] = None,
+          before_call: Optional[Callable[[Backend, str], None]] = None) -> Dict[str, Any]:
     stem = "round{0}-{1}".format(round_no, schema_name)
     cached = run_dir / (stem + ".json")
     if resume and cached.exists():
         try:
             data = json.loads(cached.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("cached output must be an object")
+            if steps is not None:
+                steps.append(dict(role=role, round=round_no, reused=True,
+                                  assigned=dict(backend=backend.name, model=model),
+                                  source=_cached_source(cached)))
+            if dry_run:
+                source = _cached_source(cached)
+                origin = "{backend}/{model}".format(**source) if source else "来源未记录"
+                log("--- {0}（{1} {2}，复用；产出 {3}；无生成调用）---".format(
+                    role, backend.name, model, origin))
+                return data
             log("  {0} 复用上次的产出（{1}）".format(role, cached.name))
             return data
         except (OSError, ValueError):
@@ -398,14 +504,21 @@ def _step(role: str, prompt: str, target: Path, cfg: Dict[str, Any],
         return {}
 
     log("  {0} 跑起来了（{1}，{2}）…".format(
-        role, model, MODE_LABEL.get(mode, mode)))
+        role, backend.name + "/" + model if cfg.get("role_mode") else model,
+        MODE_LABEL.get(mode, mode)))
     t0 = time.time()
     guard = ReadOnlyGuard(target, role, enabled=readonly)
-    with guard:
-        call = backend.run(
-            prompt, cwd=target, model=model, mode=mode,
-            schema_path=config.schema(schema_name), timeout_sec=int(timeout))
-    ledger.add(role, round_no, call)
+    if before_call is not None:
+        before_call(backend, model)
+    try:
+        with guard:
+            call = backend.run(
+                prompt, cwd=target, model=model, mode=mode,
+                schema_path=config.schema(schema_name), timeout_sec=int(timeout))
+            # Usage is real even if the guard rejects the returned work.
+            ledger.add(role, round_no, call, backend=backend.name, model=model)
+    except CliNotFound as e:
+        raise CliNotFound("{0}（{1}/{2}）：{3}".format(role, backend.name, model, e)) from e
     report.dump_json(run_dir / (stem + ".raw.json"), dict(call))
 
     if call.degraded:
@@ -424,7 +537,8 @@ def _step(role: str, prompt: str, target: Path, cfg: Dict[str, Any],
                 call, cwd=target, model=model, mode=mode,
                 schema_path=config.schema(schema_name),
                 timeout_sec=SALVAGE_TIMEOUT_SEC,
-                on_attempt=lambda c: ledger.add(role + "(续接)", round_no, c))
+                on_attempt=lambda c: ledger.add(role + "(续接)", round_no, c,
+                                                backend=backend.name, model=model))
         if rescued is None:
             raise LoopError(_role_failed(role, call))
         report.dump_json(run_dir / (stem + ".salvage.json"), dict(rescued))
@@ -433,6 +547,12 @@ def _step(role: str, prompt: str, target: Path, cfg: Dict[str, Any],
     log("    用时 {0:.0f}s，{1:,} tokens".format(time.time() - t0,
                                                  call.total_tokens))
     report.dump_json(run_dir / (stem + ".json"), call.data)
+    source = dict(backend=backend.name, model=model)
+    report.dump_json(_source_path(cached), dict(
+        source, sha256=hashlib.sha256(cached.read_bytes()).hexdigest()))
+    if steps is not None:
+        steps.append(dict(role=role, round=round_no, reused=False,
+                          assigned=source, source=source))
     return call.data
 
 

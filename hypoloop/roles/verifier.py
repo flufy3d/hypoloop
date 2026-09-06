@@ -19,7 +19,11 @@ def _backend_notes(cfg: Dict[str, Any]) -> List[str]:
     """
     from .. import backends
     try:
-        return backends.get(cfg.get("backend") or "").env_notes()
+        if "_verifier_env_notes" in cfg:
+            return cfg["_verifier_env_notes"]
+        pair = (cfg.get("roles") or {}).get("verifier") or {}
+        return backends.get(pair.get("backend") or cfg.get("verifier_backend")
+                            or cfg.get("backend") or "").env_notes()
     except Exception:      # noqa: BLE001 —— 环境探测失败不该让整轮跑不起来
         return []
 
